@@ -35,7 +35,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.23</span></div>
+<div id="hud">HP <b id="hp">100</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.24</span></div>
 <div id="hint">PC: WASD 이동 · J 공격(연타=콤보) · K 대시 · 대시중 J=대시공격</div>
 
 <div id="stick"><div id="knob"></div></div>
@@ -355,6 +355,7 @@ const DASH_SPD = 15, DASH_TIME = 11, DASH_CD = 22, DASH_IFR = 20;
 const ACCEL = 0.28;      // how fast we reach target speed (higher = snappier)
 const DECEL = 0.22;      // how fast we stop when input released (lower = more glide)
 const TURN_RATE = 0.35;  // facing interpolation per frame (1 = instant snap)
+const IDLE_SPD = 0.6;    // below this speed he's considered stopped (walk -> idle)
 
 function tryAttack(){
   // Dash attack: pressing attack during a dash OR shortly after → forward piercing thrust
@@ -482,10 +483,15 @@ function update(){
   if(player.dashAtkWin>0)player.dashAtkWin--;
   if(player.iFr>0)player.iFr--;
 
-  // breathing: slow when healthy, faster/heavier when hurt
+  // breathing: slow when healthy, faster/heavier when hurt.
+  // Reset toward neutral while moving so he starts a fresh breath on stopping.
   const hpFrac = player.hp/player.maxhp;
-  player.breath += 0.055 + (1-hpFrac)*0.05;
-  if(player.breath > Math.PI*2) player.breath -= Math.PI*2;
+  if(Math.hypot(player.vx,player.vy) > IDLE_SPD || player.atkT>0 || player.dashT>0){
+    player.breath = 0;
+  } else {
+    player.breath += 0.055 + (1-hpFrac)*0.05;
+    if(player.breath > Math.PI*2) player.breath -= Math.PI*2;
+  }
   if(player.hitFlash>0)player.hitFlash--;
   if(shake>0)shake*=0.85;
 
@@ -809,10 +815,12 @@ function draw(){
     else dir = player.fy<0 ? 'up' : 'down';
     // state priority: attack > dash > walk > idle
     // NOTE: a dash-attack IS a swing — it must use the attack pose, not the dash pose.
+    // NOTE: use actual speed (not input) so he keeps walking while coasting to a stop.
     let state = 'idle';
+    const spd = Math.hypot(player.vx, player.vy);
     if(player.atkT>0) state = 'attack';
     else if(player.dashT>0) state = 'dash';
-    else if(player._moving) state = 'walk';
+    else if(player._moving || spd > IDLE_SPD) state = 'walk';
     let tint = null;
     if(player.hitFlash>0) tint='#ffffff';
     else if(player.dashT>0 || player.dashAtk) tint='#bfe4ff';
