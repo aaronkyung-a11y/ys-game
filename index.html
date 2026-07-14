@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# One-shot deploy: create the repo, push, and enable GitHub Pages.
+# Requires: git + GitHub CLI (gh) installed and authenticated (`gh auth login`).
+set -euo pipefail
+REPO="ys-game"
+OWNER="$(gh api user --jq .login)"
+
+echo "▶ Creating public repo $OWNER/$REPO and pushing…"
+git init -q 2>/dev/null || true
+git add -A
+git -c commit.gpgsign=false commit -q -m "YS Proto v0.22 — PWA" 2>/dev/null || true
+git branch -M main
+gh repo create "$REPO" --public --source=. --remote=origin --push \
+  --description "YS 액션 프로토타입 (PWA)"
+
+echo "▶ Enabling GitHub Pages (main / root)…"
+gh api -X POST "repos/$OWNER/$REPO/pages" \
+  -H "Accept: application/vnd.github+json" \
+  -f "source[branch]=main" -f "source[path]=/" 2>/dev/null \
+  || echo "  (Pages may already be enabled, or enable it manually: Settings → Pages → Branch: main / root)"
+
+echo "✅ Done. Live in ~1 min at: https://$OWNER.github.io/$REPO/"
