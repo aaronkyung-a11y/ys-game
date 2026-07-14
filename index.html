@@ -35,7 +35,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.22</span></div>
+<div id="hud">HP <b id="hp">100</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.23</span></div>
 <div id="hint">PC: WASD 이동 · J 공격(연타=콤보) · K 대시 · 대시중 J=대시공격</div>
 
 <div id="stick"><div id="knob"></div></div>
@@ -100,6 +100,7 @@ const player = {
   x:1200, y:900, r:23, spd:5.0, hp:100, maxhp:100,
   fx:1, fy:0,               // facing
   fang:0,                   // smoothed facing angle (radians)
+  breath:0,                 // idle breathing phase
   vx:0, vy:0,               // velocity (momentum)
   atkT:0, atkCd:0,          // attack anim timer / cooldown
   combo:0, comboWin:0,      // combo step (0-2) / input buffer window
@@ -480,6 +481,11 @@ function update(){
   if(player.dashCd>0)player.dashCd--;
   if(player.dashAtkWin>0)player.dashAtkWin--;
   if(player.iFr>0)player.iFr--;
+
+  // breathing: slow when healthy, faster/heavier when hurt
+  const hpFrac = player.hp/player.maxhp;
+  player.breath += 0.055 + (1-hpFrac)*0.05;
+  if(player.breath > Math.PI*2) player.breath -= Math.PI*2;
   if(player.hitFlash>0)player.hitFlash--;
   if(shake>0)shake*=0.85;
 
@@ -802,14 +808,23 @@ function draw(){
     if(Math.abs(player.fx) >= Math.abs(player.fy)) dir = player.fx<0 ? 'left' : 'right';
     else dir = player.fy<0 ? 'up' : 'down';
     // state priority: attack > dash > walk > idle
+    // NOTE: a dash-attack IS a swing — it must use the attack pose, not the dash pose.
     let state = 'idle';
-    if(player.atkT>0) state = player.dashAtk ? 'dash' : 'attack';
+    if(player.atkT>0) state = 'attack';
     else if(player.dashT>0) state = 'dash';
     else if(player._moving) state = 'walk';
     let tint = null;
     if(player.hitFlash>0) tint='#ffffff';
     else if(player.dashT>0 || player.dashAtk) tint='#bfe4ff';
-    drawHero(player.x, player.y, 124, state, dir, tint);
+
+    // idle breathing: gentle vertical squash/stretch so he isn't a statue
+    let h = 124, yOff = 0;
+    if(state==='idle'){
+      const br = Math.sin(player.breath);      // -1..1
+      h = 124 * (1 + br*0.018);                // ~2% chest rise
+      yOff = -(h-124)/2 + br*0.9;              // keep feet planted, slight bob
+    }
+    drawHero(player.x, player.y + yOff, h, state, dir, tint);
   }
 
   // effects
