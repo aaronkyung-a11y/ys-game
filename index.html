@@ -35,7 +35,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.21</span></div>
+<div id="hud">HP <b id="hp">100</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.22</span></div>
 <div id="hint">PC: WASD 이동 · J 공격(연타=콤보) · K 대시 · 대시중 J=대시공격</div>
 
 <div id="stick"><div id="knob"></div></div>
@@ -99,6 +99,8 @@ dashBtn.addEventListener('mousedown',()=>dashQueued=true);
 const player = {
   x:1200, y:900, r:23, spd:5.0, hp:100, maxhp:100,
   fx:1, fy:0,               // facing
+  fang:0,                   // smoothed facing angle (radians)
+  vx:0, vy:0,               // velocity (momentum)
   atkT:0, atkCd:0,          // attack anim timer / cooldown
   combo:0, comboWin:0,      // combo step (0-2) / input buffer window
   dashAtk:false,            // is current swing a dash attack
@@ -348,6 +350,10 @@ const COMBO = [
 // dash attack: long forward thrust, piercing, invulnerable — for punching THROUGH a group
 const DASH_ATK = { total:20, active:14, arc:Math.PI*0.5, range:130, dmg:2, knock:22, hs:6 };
 const DASH_SPD = 15, DASH_TIME = 11, DASH_CD = 22, DASH_IFR = 20;
+// ---- movement feel tuning ----
+const ACCEL = 0.28;      // how fast we reach target speed (higher = snappier)
+const DECEL = 0.22;      // how fast we stop when input released (lower = more glide)
+const TURN_RATE = 0.35;  // facing interpolation per frame (1 = instant snap)
 
 function tryAttack(){
   // Dash attack: pressing attack during a dash OR shortly after → forward piercing thrust
@@ -391,6 +397,18 @@ function tryAttack(){
 }
 function tryDash(){
   if(player.dashCd>0) return;
+  // dash commits instantly to the direction being held (no turn lag)
+  let ix=0, iy=0;
+  if(keys['w']||keys['arrowup'])iy-=1;
+  if(keys['s']||keys['arrowdown'])iy+=1;
+  if(keys['a']||keys['arrowleft'])ix-=1;
+  if(keys['d']||keys['arrowright'])ix+=1;
+  ix += stickVec.x; iy += stickVec.y;
+  const il = Math.hypot(ix,iy);
+  if(il>0.1){
+    player.fx = ix/il; player.fy = iy/il;
+    player.fang = Math.atan2(player.fy, player.fx);
+  }
   player.dashT = DASH_TIME; player.dashCd = DASH_TIME + DASH_CD; player.iFr = DASH_IFR;
   player.dashAtkWin = DASH_TIME + 22; // stays open ~22 frames after dash ends
 }
@@ -414,15 +432,45 @@ function update(){
   if(atkQueued){ tryAttack(); atkQueued=false; }
   if(dashQueued){ tryDash(); dashQueued=false; }
 
-  // facing follows movement (not during attack)
-  if(il>0.1 && player.atkT<=0){ player.fx=ix/Math.max(il,0.001); player.fy=iy/Math.max(il,0.001); }
+  // facing follows movement (not during attack) — smoothed turn
+  if(il>0.1 && player.atkT<=0 && player.dashT<=0){
+    const target = Math.atan2(iy, ix);
+    let diff = target - player.fang;
+    while(diff >  Math.PI) diff -= Math.PI*2;
+    while(diff < -Math.PI) diff += Math.PI*2;
+    player.fang += diff * TURN_RATE;
+    player.fx = Math.cos(player.fang);
+    player.fy = Math.sin(player.fang);
+  }
 
   // ---- move ----
   if(player.dashT>0){
-    player.x += player.fx*DASH_SPD; player.y += player.fy*DASH_SPD; player.dashT--;
-  } else if(player.atkT<=0){ // can't move mid-swing (Ys-ish commitment)
-    player.x += ix*player.spd; player.y += iy*player.spd;
+    // dash: strong impulse that eases out instead of constant slide
+    const t = player.dashT/DASH_TIME;          // 1 -> 0
+    const s = DASH_SPD * (0.45 + 0.55*t*t);    // fast at start, tapers
+    player.vx = player.fx*s; player.vy = player.fy*s;
+    player.dashT--;
+    if(player.dashT===0){ player.vx *= 0.5; player.vy *= 0.5; } // carry a little out of the dash
+  } else if(player.atkT>0){
+    // committed swing, but a short forward lunge on the active frames
+    const sw = player.sw || COMBO[player.combo];
+    const activeFrom = sw.total - (sw.total-sw.active);
+    if(player.atkT <= activeFrom && player.atkT > activeFrom - sw.active){
+      const lunge = (player.dashAtk ? 3.2 : 1.5);
+      player.vx += player.fx*lunge*0.35;
+      player.vy += player.fy*lunge*0.35;
+    }
+    player.vx *= 0.80; player.vy *= 0.80;     // bleed off quickly while swinging
+  } else {
+    // walking: accelerate toward target velocity, decelerate when input released
+    const tvx = ix*player.spd, tvy = iy*player.spd;
+    const a = (il>0.1) ? ACCEL : DECEL;
+    player.vx += (tvx - player.vx) * a;
+    player.vy += (tvy - player.vy) * a;
+    if(Math.abs(player.vx)<0.02) player.vx = 0;
+    if(Math.abs(player.vy)<0.02) player.vy = 0;
   }
+  player.x += player.vx; player.y += player.vy;
   player.x = Math.max(player.r, Math.min(WORLD.w-player.r, player.x));
   player.y = Math.max(player.r, Math.min(WORLD.h-player.r, player.y));
   ({x:player.x, y:player.y} = collideWalls(player.x, player.y, player.r));
