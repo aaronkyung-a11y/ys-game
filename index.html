@@ -44,7 +44,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.43</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.44</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
 </div>
 <div id="hint">PC: WASD 이동 · J 공격(연타=콤보) · K 대시 · 대시중 J=대시공격</div>
@@ -265,6 +265,58 @@ const MAPS = {
     ]
   }
 };
+// ---- MAP THEMES ----
+// Each map gets its own floor/wall palette so travelling somewhere actually
+// looks like somewhere else. The floor tile is generated procedurally at load.
+const THEMES = {
+  field: {
+    floor:'#243020', floorAlt:'#2a3726', grout:'#1a2418',
+    wallTop:'#4a5c3a', wallFace:'#33422a', wallEdge:'#1d2618',
+    speck:'#3d5030', tile:64
+  },
+  ruins: {
+    floor:'#2b2a33', floorAlt:'#33323d', grout:'#1e1d24',
+    wallTop:'#5a5468', wallFace:'#3e3a4a', wallEdge:'#22202a',
+    speck:'#474459', tile:56
+  },
+  lair: {
+    floor:'#2e2320', floorAlt:'#382a26', grout:'#1f1715',
+    wallTop:'#6a4038', wallFace:'#4a2c26', wallEdge:'#281816',
+    speck:'#4d332c', tile:72
+  }
+};
+function theme(){ return THEMES[curMap] || THEMES.field; }
+
+// Build a repeating floor tile once per map. A canvas pattern means the whole
+// floor is one fillRect instead of thousands of per-tile draws.
+let floorPattern = null;
+function buildFloorPattern(){
+  const t = theme();
+  const c = document.createElement('canvas');
+  c.width = c.height = t.tile*2;      // 2x2 checker of subtly different tones
+  const g = c.getContext('2d');
+  for(let i=0;i<2;i++) for(let j=0;j<2;j++){
+    g.fillStyle = ((i+j)%2===0) ? t.floor : t.floorAlt;
+    g.fillRect(i*t.tile, j*t.tile, t.tile, t.tile);
+  }
+  g.strokeStyle = t.grout; g.lineWidth = 2;
+  for(let i=0;i<=2;i++){
+    g.beginPath(); g.moveTo(i*t.tile,0); g.lineTo(i*t.tile,t.tile*2); g.stroke();
+    g.beginPath(); g.moveTo(0,i*t.tile); g.lineTo(t.tile*2,i*t.tile); g.stroke();
+  }
+  // deterministic speckle so the floor isn't flat colour
+  let seed = 12345;
+  const rnd = ()=> (seed = (seed*1103515245+12345) & 0x7fffffff) / 0x7fffffff;
+  g.fillStyle = t.speck;
+  for(let i=0;i<90;i++){
+    const x=rnd()*t.tile*2, y=rnd()*t.tile*2, s=1+rnd()*2.5;
+    g.globalAlpha = 0.25+rnd()*0.4;
+    g.fillRect(x, y, s, s);
+  }
+  g.globalAlpha=1;
+  floorPattern = ctx.createPattern(c, 'repeat');
+}
+
 let curMap = 'field';
 const WORLD = { w:MAPS.field.w, h:MAPS.field.h };
 const cam = { x:0, y:0 };
@@ -633,6 +685,7 @@ function loadMap(name, entryX, entryY){
   const m = MAPS[name];
   WORLD.w = m.w; WORLD.h = m.h;
   buildWalls();
+  buildFloorPattern();
   player.x = entryX ?? 120; player.y = entryY ?? m.h/2;
   player.vx = 0; player.vy = 0;
   bullets=[]; orbs=[]; popups=[]; effects=[];
@@ -645,6 +698,7 @@ function loadMap(name, entryX, entryY){
 }
 function gateRect(){ return MAPS[curMap].gate; }
 buildWalls();
+buildFloorPattern();
 populateWorld();
 
 // ---- combat ----
@@ -1167,11 +1221,22 @@ function draw(){
   ctx.translate(sx,sy);
   ctx.translate(-cam.x, -cam.y); // camera follows player
 
-  // grid floor (only the visible slice of the world)
-  ctx.strokeStyle='rgba(255,255,255,.03)'; ctx.lineWidth=1;
-  const gx0=Math.floor(cam.x/45)*45, gy0=Math.floor(cam.y/45)*45;
-  for(let gx=gx0; gx<=cam.x+W; gx+=45){ctx.beginPath();ctx.moveTo(gx,cam.y);ctx.lineTo(gx,cam.y+H);ctx.stroke();}
-  for(let gy=gy0; gy<=cam.y+H; gy+=45){ctx.beginPath();ctx.moveTo(cam.x,gy);ctx.lineTo(cam.x+W,gy);ctx.stroke();}
+  // ---- tiled floor (only the visible slice) ----
+  if(floorPattern){
+    ctx.fillStyle = floorPattern;
+    ctx.fillRect(cam.x, cam.y, W, H);
+  }
+  // darken toward the world edges so the arena feels bounded, not cropped
+  {
+    const t = theme();
+    const vg = ctx.createRadialGradient(
+      WORLD.w/2, WORLD.h/2, Math.min(WORLD.w,WORLD.h)*0.30,
+      WORLD.w/2, WORLD.h/2, Math.max(WORLD.w,WORLD.h)*0.62);
+    vg.addColorStop(0, 'rgba(0,0,0,0)');
+    vg.addColorStop(1, 'rgba(0,0,0,0.45)');
+    ctx.fillStyle = vg;
+    ctx.fillRect(cam.x, cam.y, W, H);
+  }
 
   // walls
   // ---- exit gate ----
@@ -1202,11 +1267,22 @@ function draw(){
   for(const w of walls){
     // cull offscreen
     if(w.x+w.w<cam.x||w.x>cam.x+W||w.y+w.h<cam.y||w.y>cam.y+H) continue;
-    ctx.fillStyle='#2a3446';
+    const th = theme();
+    // drop shadow: sells the wall as a solid block standing on the floor
+    ctx.fillStyle='rgba(0,0,0,.35)';
+    ctx.fillRect(w.x+5, w.y+7, w.w, w.h);
+    // main face
+    ctx.fillStyle=th.wallFace;
     ctx.fillRect(w.x, w.y, w.w, w.h);
-    ctx.fillStyle='#39465c';
-    ctx.fillRect(w.x, w.y, w.w, 4); // top highlight
-    ctx.strokeStyle='#1b2230'; ctx.lineWidth=2;
+    // top cap — lit from above, gives the block height
+    ctx.fillStyle=th.wallTop;
+    ctx.fillRect(w.x, w.y, w.w, Math.min(10, w.h*0.35));
+    // inner shading toward the bottom
+    const gr2 = ctx.createLinearGradient(0, w.y, 0, w.y+w.h);
+    gr2.addColorStop(0, 'rgba(255,255,255,.05)');
+    gr2.addColorStop(1, 'rgba(0,0,0,.28)');
+    ctx.fillStyle=gr2; ctx.fillRect(w.x, w.y, w.w, w.h);
+    ctx.strokeStyle=th.wallEdge; ctx.lineWidth=2;
     ctx.strokeRect(w.x, w.y, w.w, w.h);
   }
 
