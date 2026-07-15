@@ -52,7 +52,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.60</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.61</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
   <div id="ragewrap"><div id="ragebar"></div></div>
 </div>
@@ -246,7 +246,7 @@ const MAPS = {
   field: {
     name: '들판',
     w: 2400, h: 1800,
-    plan: { grunt:12, charger:5, shooter:4 },
+    plan: { grunt:10, charger:4, shooter:4, shield:3 },
     gate: { x:2280, y:840, w:96, h:120, to:'ruins', label:'유적으로' },
     walls: [
       {x:360, y:300, w:260, h:40}, {x:360, y:300, w:40, h:240},
@@ -264,7 +264,7 @@ const MAPS = {
   ruins: {
     name: '무너진 유적',
     w: 2000, h: 1600,
-    plan: { grunt:8, charger:7, shooter:7 },   // harder mix
+    plan: { grunt:6, charger:6, shooter:6, shield:5 },   // harder mix
     gate: { x:1880, y:740, w:96, h:120, to:'lair', label:'둥지로' },
     walls: [
       {x:300, y:260, w:40, h:420}, {x:300, y:260, w:420, h:40},
@@ -1060,6 +1060,7 @@ const ETYPE = {
   grunt:   { r:22, spd:2.0, hp:3, color:'#e05a5a', touch:6,  xp:3,   gold:6,  kb:1.0 },  // basic chaser
   charger: { r:26, spd:1.1, hp:4, color:'#e0913a', touch:10, xp:6,   gold:16, kb:0.55 }, // slow, then lunges
   shooter: { r:22, spd:1.5, hp:2, color:'#9a5ae0', touch:5,  xp:5,   gold:12, kb:1.0 },  // keeps distance, fires
+  shield:  { r:24, spd:1.4, hp:5, color:'#6a8fb0', touch:8,  xp:8,   gold:20, kb:0.3 },  // guards its front — parry or flank it
   boss:    { r:52, spd:1.3, hp:150, color:'#c94f4f', touch:18, xp:120, gold:200, kb:0 },  // orc lord — immovable
   knight:  { r:34, spd:4.2, hp:420, color:'#e8c86a', touch:26, xp:200, gold:400, kb:0.2 }, // golden knight — light but braced
 };
@@ -1069,8 +1070,8 @@ function makeEnemy(kind, x, y){
   const t = ETYPE[kind];
   return {
     kind, x, y, r:t.r, spd:t.spd, hp:t.hp, maxhp:t.hp, color:t.color, touch:t.touch, xp:t.xp, gold:t.gold||1, kb:(t.kb!==undefined?t.kb:1),
-    knx:0, kny:0, hitFlash:0, atkCd:0, stunT:0, blockT:0, detourDir:0, commit:0,
-    state: kind==='shooter'?'cool':'approach', stateT: kind==='shooter'?60:0,
+    knx:0, kny:0, hitFlash:0, atkCd:0, stunT:0, blockT:0, detourDir:0, commit:0, guardT:0, blockFlash:0, wind:0,
+    state: kind==='shooter'?'cool':(kind==='shield'?'guard':'approach'), stateT: kind==='shooter'?60:(kind==='shield'?60:0),
     chgVx:0, chgVy:0, aimX:0, aimY:0, chain:0,
     // --- per-enemy personality so identical types don't move identically ---
     orbitDir: Math.random()<0.5 ? -1 : 1,      // circle left or right
@@ -1148,6 +1149,15 @@ const DASH_SPD = 15, DASH_TIME = 11, DASH_CD = 22, DASH_IFR = 20;
 // away early is safe (i-frames already covered that); dashing *into* an
 // incoming blow at the right moment rewards you. Mobile has two buttons and
 // adding a third would crowd the thumb.
+// The guarded arc. Slightly over 180 deg on purpose: at exactly PI the
+// boundary case (offset == 90.0) fell through the `<` comparison and let hits
+// leak in — traced 6 dmg over 8 swings from dead in front. Widening it a touch
+// makes "in front of the shield" unambiguous.
+// 1.15*PI made the SIDES block too (offset 90 < half-arc 103), leaving only a
+// dead-rear opening — too punishing. 0.9*PI (half = 81 deg) blocks the front
+// while leaving both flanks and the back open, so circling is a real answer.
+const SHIELD_ARC = Math.PI*0.9;
+const GUARD_BREAK = 150;          // frames its guard stays down after a parry
 const PARRY_WINDOW = 6;      // frames at the start of a dash that count as parry
 const PARRY_FREEZE = 22;     // how long a parried enemy is stunned
 let parryFlash = 0;
@@ -1162,6 +1172,12 @@ function onParry(e){
   if(e){
     e.stunT = PARRY_FREEZE;
     if(e.kind==='charger' && e.state==='charge'){ e.state='rest'; e.stateT=40; }
+    if(e.kind==='shield'){
+      // Parrying the bash tears the guard open — the whole point of the enemy.
+      e.guardT = GUARD_BREAK;
+      e.state='guard'; e.stateT=60;
+      popups.push({x:e.x, y:e.y-e.r-10, val:'GUARD BREAK!', t:60, vy:-0.7, gbreak:true});
+    }
     const a = Math.atan2(e.y-player.y, e.x-player.x);
     for(let i=0;i<14;i++){
       const ang=a+(Math.random()-0.5)*2.2, sp=4+Math.random()*5;
@@ -1404,6 +1420,28 @@ function update(){
         }
         // walls block the blade — no reaching through cover
         if(hit && !hasLineOfSight(player.x, player.y, e.x, e.y)) hit = false;
+        // Shield goblins guard the arc they're facing. Hitting the shield does
+        // nothing but ring — you have to get behind them, or parry their swing
+        // to break the guard. This is what gives the parry a reason to exist:
+        // without an enemy you *can't* simply out-trade, parrying is optional.
+        if(hit && e.kind==='shield' && e.guardT<=0 && !e._hitThisSwing){
+          const toPlayer = Math.atan2(player.y-e.y, player.x-e.x);
+          const facing = { right:0, down:Math.PI/2, left:Math.PI, up:-Math.PI/2 }[e.face] ?? 0;
+          let off = Math.abs(((toPlayer-facing+Math.PI*3)%(Math.PI*2))-Math.PI);
+          if(off < SHIELD_ARC/2){
+            e._hitThisSwing = true;          // consumed by the shield
+            e.blockFlash = 10;
+            hitStop = Math.max(hitStop, 3);
+            SFX.parry();                      // that metallic clang, but you gained nothing
+            const bx = e.x + Math.cos(toPlayer)*e.r, by = e.y + Math.sin(toPlayer)*e.r;
+            for(let i=0;i<8;i++){
+              const a2 = toPlayer + Math.PI + (Math.random()-0.5)*1.6, sp=2+Math.random()*3;
+              effects.push({x:bx, y:by, vx:Math.cos(a2)*sp, vy:Math.sin(a2)*sp, t:10, c:'#cfe0f5', type:'spark'});
+            }
+            popups.push({x:e.x, y:e.y-e.r-6, val:'MISS', t:26, vy:-0.8, block:true});
+            hit = false;
+          }
+        }
         if(hit && !e._hitThisSwing){
             const ang = Math.atan2(dy,dx);
             e._hitThisSwing = true; // piercing: one hit per enemy per swing (incl. dash)
@@ -1521,6 +1559,22 @@ function update(){
         } else {
           e.state='cool'; e.stateT=60;
         }
+      } else if(e.kind==='shield'){
+        // Advances behind the shield, always facing you. It can't be out-traded
+        // from the front, so the answers are: flank it, or parry its swing.
+        if(e.state==='bash'){
+          // committed swing — this is the parryable moment
+          moveWithSlide(e, dx/d*e.spd*1.6, dy/d*e.spd*1.6);
+          e.stateT--;
+          if(e.stateT<=0){ e.state='guard'; e.stateT=50+Math.random()*40; }
+        } else {
+          const dv = detourVec(e, dx, dy, d);
+          if(dv) moveWithSlide(e, dv.x*e.spd, dv.y*e.spd);
+          else if(d > 60) moveWithSlide(e, dx/d*e.spd, dy/d*e.spd);
+          e.stateT--;
+          if(e.stateT<=0 && d<190){ e.state='bash'; e.stateT=30; e.wind=14; }
+        }
+        if(e.guardT>0) e.guardT--;
       } else if(e.kind==='knight'){
         // Golden Knight: the orc's opposite. He telegraphs slowly and commits;
         // she blinks in, thrusts, and is gone. You react rather than read.
@@ -2018,6 +2072,36 @@ function draw(){
       const row = bracing ? 2 : (Math.floor(e.walkT/10)%2);
       const rage = e.hp <= e.maxhp*0.4;
       drawOrc(e.x, e.y, 274, e.face, row, tint || (rage?'#ff6a4d':null));
+    } else if(e.kind==='shield' && gobSheetReady){
+      // Reuse the goblin body and draw the shield in code — a flat slab is
+      // cleaner as vectors than as pixel art, and it lets the guard state
+      // (up / broken) be drawn honestly rather than faked with a tint.
+      const bashing = (e.state==='bash');
+      const row = bashing ? 2 : (Math.floor(e.walkT/6)%2);
+      drawGoblin(e.x, e.y, 98, e.face, row, tint || '#7fa8cc');
+      const fa = { right:0, down:Math.PI/2, left:Math.PI, up:-Math.PI/2 }[e.face] ?? 0;
+      const broken = e.guardT>0;
+      const sx2 = e.x + Math.cos(fa)*22, sy2 = e.y + Math.sin(fa)*22 - 6;
+      ctx.save();
+      ctx.translate(sx2, sy2);
+      ctx.rotate(fa + (broken ? 0.9 : 0));      // knocked aside when broken
+      ctx.globalAlpha = broken ? 0.5 : 1;
+      ctx.fillStyle = e.blockFlash>0 ? '#ffffff' : '#5b7fa6';
+      ctx.fillRect(-5, -22, 10, 44);
+      ctx.fillStyle = e.blockFlash>0 ? '#ffffff' : '#8fb4d8';
+      ctx.fillRect(-5, -22, 10, 6);
+      ctx.strokeStyle='#2a3d52'; ctx.lineWidth=2;
+      ctx.strokeRect(-5, -22, 10, 44);
+      ctx.fillStyle = e.blockFlash>0 ? '#ffffff' : '#c9a44f';
+      ctx.fillRect(-3, -5, 6, 10);              // boss stud
+      ctx.restore();
+      ctx.globalAlpha = 1;
+      if(e.blockFlash>0) e.blockFlash--;
+      if(broken){
+        ctx.fillStyle='rgba(255,120,90,.9)'; ctx.font='bold 10px system-ui'; ctx.textAlign='center';
+        ctx.fillText('무방비', e.x, e.y-e.r-16);
+        ctx.textAlign='left';
+      }
     } else if(e.kind==='grunt' && gobSheetReady){
       // row: 2 = attack (mid-rush / just hit), else alternate walk frames 0/1
       const attacking = (e.state==='rush') || (e.atkCd>20);
@@ -2236,6 +2320,10 @@ function draw(){
     }
     else if(p.buy){ ctx.font='bold 15px system-ui'; ctx.fillStyle='#ffd36e'; ctx.fillText(p.val+' 장착!', p.x, p.y); }
     else if(p.lost){ ctx.font='bold 15px system-ui'; ctx.fillStyle='#e0713a'; ctx.fillText('-'+p.val+'G', p.x, p.y); }
+    else if(p.block){ ctx.font='bold 12px system-ui'; ctx.fillStyle='#9fc4e8'; ctx.fillText(p.val, p.x, p.y); }
+    else if(p.gbreak){ ctx.font='bold 17px system-ui'; ctx.fillStyle='#ff8a4d';
+      ctx.strokeStyle='rgba(0,0,0,.6)'; ctx.lineWidth=3;
+      ctx.strokeText(p.val, p.x, p.y); ctx.fillText(p.val, p.x, p.y); }
     else if(p.xp){ ctx.font='bold 13px system-ui'; ctx.fillStyle='#6ec1ff'; ctx.fillText('+'+p.val+' XP', p.x, p.y); }
     else if(p.heal){ ctx.font='bold 15px system-ui'; ctx.fillStyle='#4ce690'; ctx.fillText('+'+p.val, p.x, p.y); }
     else { ctx.font=p.big?'bold 20px system-ui':'bold 15px system-ui';
@@ -2263,8 +2351,8 @@ function draw(){
     ctx.fillStyle='rgba(42,52,70,.9)';
     for(const w of walls) ctx.fillRect(mx+w.x*sc, my+w.y*sc, Math.max(1,w.w*sc), Math.max(1,w.h*sc));
     for(const e of enemies){
-      ctx.fillStyle = e.kind==='boss'?'#ff5a5a':e.kind==='charger'?'#e0913a':e.kind==='shooter'?'#9a5ae0':'#e05a5a';
-      const s = e.kind==='boss' ? 5 : 2.5;
+      ctx.fillStyle = (e.kind==='boss'||e.kind==='knight')?'#ff5a5a':e.kind==='charger'?'#e0913a':e.kind==='shooter'?'#9a5ae0':e.kind==='shield'?'#6a8fb0':'#e05a5a';
+      const s = (e.kind==='boss'||e.kind==='knight') ? 5 : 2.5;
       ctx.fillRect(mx+e.x*sc-1, my+e.y*sc-1, s, s);
     }
     const gm = gateRect();
