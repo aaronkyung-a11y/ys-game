@@ -84,6 +84,17 @@ def to_cell(f, scale, mirror=False):
     cell.paste(crop,(int(CELL/2-(fc-bb[0])*sc), int(CELL*0.95-crop.height)),crop)
     return cell
 
+# ---------- MANUAL OVERRIDES (user-verified) ----------
+# Eye-position detection is reliable for WALK rows, but breaks on ATTACK rows:
+# the body twists and the weapon extends, so the "eye is on the facing side"
+# rule no longer holds. These rows were verified by eye in-game and corrected.
+#   key: (sheet_label, row_index) -> flip left/right after auto-detection
+MANUAL_FLIP = {
+    ('GOBLIN', 2),   # attack row inverted by auto-detect (confirmed in-game v0.37)
+    ('ORC',    2),   # charge row: axe is pulled BACK, so the weapon-side rule
+                     # inverts. Verified correct in-game at v0.36.
+}
+
 def build(src, out, scale, label):
     im=Image.open(src); W,H=im.size; cw,ch=W/4,H/3
     raw={}
@@ -114,6 +125,9 @@ def build(src, out, scale, label):
             report.append(f"row{r+1}: no eye found -> matched sibling rows (mirrored)")
         sheet.paste(to_cell(raw[(r,0)], scale), (0, r*CELL))   # down
         sheet.paste(to_cell(raw[(r,1)], scale), (1*CELL, r*CELL))  # up
+        if (label, r) in MANUAL_FLIP:
+            left_cell, right_cell = right_cell, left_cell
+            report.append(f"row{r+1}: MANUAL_FLIP applied (verified in-game)")
         sheet.paste(left_cell,  (2*CELL, r*CELL))
         sheet.paste(right_cell, (3*CELL, r*CELL))
     sheet.save(out)
