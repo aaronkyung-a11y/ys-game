@@ -44,12 +44,13 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.41</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.42</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
 </div>
 <div id="hint">PC: WASD 이동 · J 공격(연타=콤보) · K 대시 · 대시중 J=대시공격</div>
 
 <audio id="bgm" loop preload="auto" src="bgm.mp3"></audio>
+<audio id="bgmBoss" loop preload="none" src="bgm_boss.mp3"></audio>
 <div id="sound">♪</div>
 <div id="stick"><div id="knob"></div></div>
 <div id="btns">
@@ -83,35 +84,68 @@ if ('serviceWorker' in navigator) {
 </script>
 <script>
 // ---- BGM ----
-// Browsers block autoplay until a user gesture, so we arm playback on the
-// first tap/key rather than calling play() on load (which would just throw).
+// Two tracks: field and boss. Browsers block autoplay until a user gesture, so
+// playback is armed on the first tap/key rather than on load.
+const BGM_VOL = 0.45;
 const BGM = document.getElementById('bgm');
+const BGM_BOSS = document.getElementById('bgmBoss');
+const TRACKS = { field: BGM, boss: BGM_BOSS };
 const soundBtn = document.getElementById('sound');
-BGM.volume = 0.45;
+BGM.volume = BGM_VOL; BGM_BOSS.volume = 0;
 let bgmOn = localStorage.getItem('ys_bgm') !== 'off';
+let curTrack = 'field';
+let fadeTimer = null;
+
 function paintSound(){
   soundBtn.textContent = bgmOn ? '♪' : '✕';
   soundBtn.classList.toggle('off', !bgmOn);
 }
 paintSound();
+
 function startBGM(){
   if(!bgmOn) return;
-  BGM.play().catch(()=>{});   // still blocked? next gesture will retry
+  TRACKS[curTrack].play().catch(()=>{});   // still blocked? next gesture retries
 }
 ['pointerdown','keydown','touchstart'].forEach(ev=>{
   addEventListener(ev, startBGM, { once:false });
 });
+
+// Crossfade rather than hard-cut — a boss reveal shouldn't sound like a
+// stopped CD. Boss track only loads when first needed (it's 3.7MB).
+function setTrack(name){
+  if(name === curTrack) return;
+  const from = TRACKS[curTrack], to = TRACKS[name];
+  curTrack = name;
+  if(!bgmOn){ from.pause(); return; }
+  to.currentTime = 0;
+  to.volume = 0;
+  to.play().catch(()=>{});
+  clearInterval(fadeTimer);
+  let t = 0;
+  fadeTimer = setInterval(()=>{
+    t += 0.06;
+    const k = Math.min(1, t);
+    to.volume   = BGM_VOL * k;
+    from.volume = BGM_VOL * (1-k);
+    if(k >= 1){
+      clearInterval(fadeTimer);
+      from.pause(); from.currentTime = 0;
+    }
+  }, 50);
+}
+
 soundBtn.addEventListener('pointerdown', e=>{
   e.stopPropagation(); e.preventDefault();
   bgmOn = !bgmOn;
   localStorage.setItem('ys_bgm', bgmOn ? 'on' : 'off');
   paintSound();
-  if(bgmOn) BGM.play().catch(()=>{}); else BGM.pause();
+  if(bgmOn){ TRACKS[curTrack].volume = BGM_VOL; TRACKS[curTrack].play().catch(()=>{}); }
+  else { BGM.pause(); BGM_BOSS.pause(); }
 });
 // pause when the tab/app is hidden so it doesn't play in the background
 addEventListener('visibilitychange', ()=>{
-  if(document.hidden) BGM.pause();
-  else if(bgmOn) BGM.play().catch(()=>{});
+  if(document.hidden){ BGM.pause(); BGM_BOSS.pause(); }
+  else if(bgmOn) TRACKS[curTrack].play().catch(()=>{});
 });
 
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
@@ -604,6 +638,7 @@ function loadMap(name, entryX, entryY){
   bullets=[]; orbs=[]; popups=[]; effects=[];
   gateOpen = false;
   mapBannerText = m.name; mapBanner = 150;
+  setTrack(m.boss ? 'boss' : 'field');
   populateWorld();
   updateCamera();
   updateHUD();
@@ -855,6 +890,10 @@ function update(){
     gateOpen = true;
     mapBannerText = '길이 열렸다 — ' + g.label;
     mapBanner = 150;
+    // start fetching the boss track now so the reveal isn't silent while it buffers
+    if(MAPS[g.to] && MAPS[g.to].boss && BGM_BOSS.preload !== 'auto'){
+      BGM_BOSS.preload = 'auto'; BGM_BOSS.load();
+    }
   }
   if(g && gateOpen &&
      player.x > g.x-player.r && player.x < g.x+g.w+player.r &&
