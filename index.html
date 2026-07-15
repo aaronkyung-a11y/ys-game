@@ -52,7 +52,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.59</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.60</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
   <div id="ragewrap"><div id="ragebar"></div></div>
 </div>
@@ -660,6 +660,66 @@ function pointInWall(px,py){
   for(const w of walls) if(px>=w.x&&px<=w.x+w.w&&py>=w.y&&py<=w.y+w.h) return true;
   return false;
 }
+// Is there a clear line between two points? Attacks used to only check distance
+// and angle, so you could stand behind a wall and hit whatever was pinned on the
+// far side — walls turned into a free killzone instead of cover.
+function hasLineOfSight(x0,y0,x1,y1){
+  const dx=x1-x0, dy=y1-y0;
+  const dist=Math.hypot(dx,dy);
+  if(dist<1) return true;
+  const steps=Math.ceil(dist/10);        // 10px granularity: walls are >=40px thick
+  for(let i=1;i<steps;i++){
+    const t=i/steps;
+    if(pointInWall(x0+dx*t, y0+dy*t)) return false;
+  }
+  return true;
+}
+// Slide along a wall instead of grinding into it. Enemies have no pathfinding —
+// they walk straight at the player — so without this they just stick to the
+// nearest obstacle and become free XP.
+function moveWithSlide(e, vx, vy){
+  const r = e.r;
+  let nx = e.x+vx, ny = e.y+vy;
+  const hit = collideWalls(nx, ny, r);
+  if(Math.abs(hit.x-nx)<0.01 && Math.abs(hit.y-ny)<0.01){
+    e.x=nx; e.y=ny;
+    if(e.blockT>0) e.blockT -= 0.5;       // free movement slowly clears the block flag
+    return true;                          // clear path
+  }
+  // blocked: try each axis alone so we glide along the surface
+  const hx = collideWalls(e.x+vx, e.y, r);
+  if(Math.abs(hx.x-(e.x+vx))<0.01){ e.x+=vx; e.y=hx.y; e.blockT=Math.min(90,(e.blockT||0)+2); return true; }
+  const hy = collideWalls(e.x, e.y+vy, r);
+  if(Math.abs(hy.y-(e.y+vy))<0.01){ e.y+=vy; e.x=hy.x; e.blockT=Math.min(90,(e.blockT||0)+2); return true; }
+  // fully cornered — take the resolved position so we don't tunnel
+  e.x=hit.x; e.y=hit.y;
+  e.blockT=Math.min(90,(e.blockT||0)+3);
+  return false;
+}
+// Enemies have no pathfinder. When a wall keeps blocking them they'd otherwise
+// hover at the obstacle forever — measured: a grunt closed 273px to 183px and
+// then stalled. So once blocked for a while, steer sideways along the wall
+// until a clear line to the player opens up. Cheap, and it reads as "going
+// around" rather than as pathfinding.
+function detourVec(e, dx, dy, d){
+  if(!e.blockT || e.blockT < 12) return null;
+  if(hasLineOfSight(e.x, e.y, player.x, player.y)){ e.blockT=0; e.detourDir=0; e.commit=0; return null; }
+  // Pick a side ONCE and stick with it long enough to actually round the corner.
+  // An earlier version flipped direction whenever it had been blocked a while,
+  // which made the enemy oscillate across the wall face (traced: x 530->591,
+  // flip, ->431, flip, ...) and never reach either end. Committing beats
+  // re-deciding when you have no pathfinder.
+  if(!e.detourDir){
+    // head toward the nearer end of whatever is blocking us
+    e.detourDir = ((-dy) * (player.x>e.x?1:-1)) >= 0 ? 1 : -1;
+    if(Math.random()<0.5) e.detourDir *= -1;   // break ties so groups don't clump
+    e.commit = 150;                            // ~2.5s of committed crabbing
+  }
+  if(e.commit > 0) e.commit--;
+  else { e.detourDir *= -1; e.commit = 150; }  // that way didn't work: try the other
+  const px = -dy/d * e.detourDir, py = dx/d * e.detourDir;
+  return { x: px, y: py };
+}
 
 // ---- pixel sprites ----
 // Each sprite is a 16x16 grid of palette keys. '.' = transparent.
@@ -1009,7 +1069,7 @@ function makeEnemy(kind, x, y){
   const t = ETYPE[kind];
   return {
     kind, x, y, r:t.r, spd:t.spd, hp:t.hp, maxhp:t.hp, color:t.color, touch:t.touch, xp:t.xp, gold:t.gold||1, kb:(t.kb!==undefined?t.kb:1),
-    knx:0, kny:0, hitFlash:0, atkCd:0, stunT:0,
+    knx:0, kny:0, hitFlash:0, atkCd:0, stunT:0, blockT:0, detourDir:0, commit:0,
     state: kind==='shooter'?'cool':'approach', stateT: kind==='shooter'?60:0,
     chgVx:0, chgVy:0, aimX:0, aimY:0, chain:0,
     // --- per-enemy personality so identical types don't move identically ---
@@ -1131,7 +1191,7 @@ function trySpecial(){
   const [ar,ag,ab] = arcRGB();
   for(const e of enemies){
     const d = Math.hypot(e.x-player.x, e.y-player.y);
-    if(d < 300){
+    if(d < 300 && hasLineOfSight(player.x, player.y, e.x, e.y)){
       const dmg = 12 + (player.atkBonus + equippedAtk())*3;
       e.hp -= dmg;
       e.hitFlash = 10;
@@ -1342,6 +1402,8 @@ function update(){
             hit = da < sw.arc/2;
           }
         }
+        // walls block the blade — no reaching through cover
+        if(hit && !hasLineOfSight(player.x, player.y, e.x, e.y)) hit = false;
         if(hit && !e._hitThisSwing){
             const ang = Math.atan2(dy,dx);
             e._hitThisSwing = true; // piercing: one hit per enemy per swing (incl. dash)
@@ -1437,7 +1499,9 @@ function update(){
         } else if(e.state==='rest'){
           e.stateT--; if(e.stateT<=0) e.state='approach';
         } else { // approach until in range, then wind up
-          e.x+=dx/d*e.spd; e.y+=dy/d*e.spd;
+          const dv = detourVec(e, dx, dy, d);
+          if(dv) moveWithSlide(e, dv.x*e.spd, dv.y*e.spd);
+          else moveWithSlide(e, dx/d*e.spd, dy/d*e.spd);
           if(d<220){ e.state='windup'; e.stateT=38; }
         }
       } else if(e.kind==='shooter'){
@@ -1450,8 +1514,8 @@ function update(){
           }
         } else if(e.state==='cool'){
           // reposition to preferred distance while cooling down
-          if(d<190){ e.x-=dx/d*e.spd*1.3; e.y-=dy/d*e.spd*1.3; }
-          else if(d>300){ e.x+=dx/d*e.spd; e.y+=dy/d*e.spd; }
+          if(d<190){ moveWithSlide(e, -dx/d*e.spd*1.3, -dy/d*e.spd*1.3); }
+          else if(d>300){ moveWithSlide(e, dx/d*e.spd, dy/d*e.spd); }
           e.stateT--;
           if(e.stateT<=0 && d<380){ e.state='aim'; e.stateT=40; e.aimX=player.x; e.aimY=player.y; }
         } else {
@@ -1509,8 +1573,8 @@ function update(){
           }
         } else { // rest — circle at fencing range, then pick a move
           const px2=-dy/d, py2=dx/d;
-          if(d>200){ e.x+=dx/d*e.spd*0.6; e.y+=dy/d*e.spd*0.6; }
-          else { e.x+=px2*e.orbitDir*e.spd*0.5; e.y+=py2*e.orbitDir*e.spd*0.5; }
+          if(d>200){ moveWithSlide(e, dx/d*e.spd*0.6, dy/d*e.spd*0.6); }
+          else { moveWithSlide(e, px2*e.orbitDir*e.spd*0.5, py2*e.orbitDir*e.spd*0.5); }
           if(e.stateT<=0){
             const roll=Math.random();
             if(roll<0.42){ e.state='blink'; e.stateT = rage?7:13; }
@@ -1560,7 +1624,7 @@ function update(){
             }
           }
         } else { // rest / approach — lumber toward the player, then pick a move
-          if(d>90) { e.x+=dx/d*e.spd*(rage?1.5:1); e.y+=dy/d*e.spd*(rage?1.5:1); }
+          if(d>90) { moveWithSlide(e, dx/d*e.spd*(rage?1.5:1), dy/d*e.spd*(rage?1.5:1)); }
           if(e.stateT<=0){
             const roll=Math.random();
             const adds = enemies.filter(x=>x.kind!=='boss').length;
@@ -1573,10 +1637,19 @@ function update(){
           }
         }
       } else { // grunt — circle warily, then commit to a real rush
+        let dvg;
         e.wobble += 0.08;
-        if(e.state==='rush'){
+        // Detour is checked FIRST. Previously `rush`/`hesitate` came first, so a
+        // grunt behind a wall would rush the wall, fail, hesitate, rush again —
+        // an infinite loop that never let the detour run. Traced: it parked at
+        // ~183px indefinitely. If there's no line of sight, going around is the
+        // only move that matters.
+        if((dvg = detourVec(e, dx, dy, d))){
+          if(e.state==='rush'){ e.state='approach'; e.hesitate=0; }
+          moveWithSlide(e, dvg.x*e.spd*1.15, dvg.y*e.spd*1.15);
+        } else if(e.state==='rush'){
           // committed: drive straight in, ignoring the orbit
-          e.x+=dx/d*e.spd*1.9; e.y+=dy/d*e.spd*1.9;
+          moveWithSlide(e, dx/d*e.spd*1.9, dy/d*e.spd*1.9);
           e.stateT--;
           if(e.stateT<=0 || d<e.r+player.r){ e.state='approach'; e.hesitate=20+Math.random()*25; }
         } else if(e.hesitate>0){
@@ -1584,7 +1657,7 @@ function update(){
           e.hesitate--;
           e.x += Math.cos(e.wobble)*0.25; e.y += Math.sin(e.wobble)*0.25;
         } else if(d > 300){
-          e.x+=dx/d*e.spd; e.y+=dy/d*e.spd;      // far: just close the gap
+          moveWithSlide(e, dx/d*e.spd, dy/d*e.spd);   // far: just close the gap
         } else {
           // danger zone: mix approach with sideways orbit so they surround
           // rather than queue up, then commit once in range.
@@ -1593,7 +1666,7 @@ function update(){
           const vx = (dx/d)*inward + px*e.orbitDir*e.orbitAmt;
           const vy = (dy/d)*inward + py*e.orbitDir*e.orbitAmt;
           const vl = Math.hypot(vx,vy)||1;
-          e.x += vx/vl*e.spd; e.y += vy/vl*e.spd;
+          moveWithSlide(e, vx/vl*e.spd, vy/vl*e.spd);
           if(Math.random()<0.006) e.orbitDir*=-1;
           // once circling at range, commit to a lunge
           if(d < 240 && Math.random()<0.02){ e.state='rush'; e.stateT=45; }
