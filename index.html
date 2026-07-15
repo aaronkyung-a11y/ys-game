@@ -44,7 +44,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.47</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.48</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
 </div>
 <div id="hint">PC: WASD 이동 · J 공격(연타=콤보) · K 대시 · 대시중 J=대시공격</div>
@@ -641,7 +641,7 @@ const ETYPE = {
   grunt:   { r:22, spd:2.0, hp:3, color:'#e05a5a', touch:6,  xp:3 },   // basic chaser
   charger: { r:26, spd:1.1, hp:4, color:'#e0913a', touch:10, xp:6 },   // slow, then lunges
   shooter: { r:22, spd:1.0, hp:2, color:'#9a5ae0', touch:5,  xp:5 },   // keeps distance, fires
-  boss:    { r:52, spd:1.3, hp:60, color:'#c94f4f', touch:16, xp:60 }, // orc lord
+  boss:    { r:52, spd:1.3, hp:150, color:'#c94f4f', touch:18, xp:120 }, // orc lord
 };
 // how hard enemies push each other apart so a group doesn't collapse into one blob
 const SEPARATION = 0.55;
@@ -651,7 +651,7 @@ function makeEnemy(kind, x, y){
     kind, x, y, r:t.r, spd:t.spd, hp:t.hp, maxhp:t.hp, color:t.color, touch:t.touch, xp:t.xp,
     knx:0, kny:0, hitFlash:0, atkCd:0,
     state: kind==='shooter'?'cool':'approach', stateT: kind==='shooter'?60:0,
-    chgVx:0, chgVy:0, aimX:0, aimY:0,
+    chgVx:0, chgVy:0, aimX:0, aimY:0, chain:0,
     // --- per-enemy personality so identical types don't move identically ---
     orbitDir: Math.random()<0.5 ? -1 : 1,      // circle left or right
     orbitAmt: 0.35 + Math.random()*0.5,        // how much it strafes vs beelines
@@ -916,7 +916,10 @@ function update(){
         if(hit && !e._hitThisSwing){
             const ang = Math.atan2(dy,dx);
             e._hitThisSwing = true; // piercing: one hit per enemy per swing (incl. dash)
-            const dmg = sw.dmg + player.atkBonus;
+            // Scale the bonus with the blow's own weight instead of adding a flat
+            // number — a flat +3 turned the 1-dmg opener into a 4 and made the
+            // 4-dmg finisher barely worth chaining. Now heavy hits stay heavy.
+            const dmg = sw.dmg + Math.round(player.atkBonus * (sw.dmg/2));
             e.hp-=dmg; e.hitFlash=6;
             e.knx = dx/d*sw.knock; e.kny = dy/d*sw.knock;
             // hitstop scales with the blow — the finisher should FEEL heavier
@@ -1020,13 +1023,7 @@ function update(){
         // (charge / slam / summon), but faster and angrier as he loses HP.
         const rage = e.hp <= e.maxhp*0.4;      // phase 2
         e.stateT--;
-        if(e.state==='charge'){
-          e.x+=e.chgVx; e.y+=e.chgVy;
-          if(e.stateT<=0 || pointInWall(e.x+e.chgVx*3, e.y+e.chgVy*3)){
-            e.state='rest'; e.stateT = rage?20:34;
-            shake=Math.max(shake,10);
-          }
-        } else if(e.state==='windup'){
+        if(e.state==='windup'){
           if(e.stateT<=0){
             const sp = rage?9.5:7.5;
             e.chgVx=dx/d*sp; e.chgVy=dy/d*sp;
@@ -1040,7 +1037,7 @@ function update(){
               const a=(i/n)*Math.PI*2 + Math.random()*0.2;
               bullets.push(makeRock(e.x, e.y, Math.cos(a)*3.0, Math.sin(a)*3.0));
             }
-            shake=14; e.state='rest'; e.stateT = rage?26:44;
+            shake=14; e.state='rest'; e.stateT = rage?18:30;
           }
         } else if(e.state==='summon'){
           if(e.stateT<=0){
@@ -1048,14 +1045,28 @@ function update(){
               const a=Math.random()*Math.PI*2, r=140;
               enemies.push(makeEnemy('grunt', e.x+Math.cos(a)*r, e.y+Math.sin(a)*r));
             }
-            e.state='rest'; e.stateT = rage?30:50;
+            e.state='rest'; e.stateT = rage?20:34;
+          }
+        } else if(e.state==='charge'){
+          e.x+=e.chgVx; e.y+=e.chgVy;
+          if(e.stateT<=0 || pointInWall(e.x+e.chgVx*3, e.y+e.chgVy*3)){
+            shake=Math.max(shake,10);
+            // In rage he chains charges — one dodge isn't enough any more.
+            if(rage && e.chain>0){
+              e.chain--; e.state='windup'; e.stateT=14;
+            } else {
+              e.chain=0; e.state='rest'; e.stateT = rage?14:24;
+            }
           }
         } else { // rest / approach — lumber toward the player, then pick a move
-          if(d>90) { e.x+=dx/d*e.spd; e.y+=dy/d*e.spd; }
+          if(d>90) { e.x+=dx/d*e.spd*(rage?1.5:1); e.y+=dy/d*e.spd*(rage?1.5:1); }
           if(e.stateT<=0){
             const roll=Math.random();
             const adds = enemies.filter(x=>x.kind!=='boss').length;
-            if(d>320 || roll<0.42){ e.state='windup'; e.stateT = rage?22:34; }
+            if(d>320 || roll<0.42){
+              e.state='windup'; e.stateT = rage?22:34;
+              e.chain = rage ? 2 : 0;      // rage: up to 3 charges back-to-back
+            }
             else if(roll<0.78 || adds>=6){ e.state='slam'; e.stateT = rage?26:38; }
             else { e.state='summon'; e.stateT=40; }
           }
