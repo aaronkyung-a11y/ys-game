@@ -28,12 +28,20 @@
     font-size:13px; font-weight:700; color:#0d0f14; user-select:none; touch-action:none; }
   #atk { width:96px; height:96px; background:#ffd36e; box-shadow:0 4px 0 #b8964a; }
   #dash { background:#6ec1ff; box-shadow:0 4px 0 #3f7fb0; }
+  #sp { background:#ff8a4d; box-shadow:0 4px 0 #b0512a; width:74px; height:74px;
+        opacity:.25; pointer-events:none; transition:opacity .2s; }
+  #sp.ready { opacity:1; pointer-events:auto; animation:sppulse .7s ease-in-out infinite; }
+  @keyframes sppulse { 0%,100%{ transform:scale(1) } 50%{ transform:scale(1.08) } }
   .abtn:active { transform:translateY(3px); box-shadow:none; }
   #hint { position:fixed; bottom:130px; left:0; right:0; text-align:center; color:#5a6a82; font-size:11px; }
   #xpwrap { width:180px; height:4px; background:rgba(255,255,255,.10); border-radius:2px;
     margin:5px auto 0; overflow:hidden; }
   #xpbar { height:100%; width:0%; background:linear-gradient(90deg,#6ec1ff,#a9e0ff);
     border-radius:2px; transition:width .18s ease-out; }
+  #ragewrap { width:180px; height:4px; background:rgba(255,255,255,.10); border-radius:2px;
+    margin:3px auto 0; overflow:hidden; }
+  #ragebar { height:100%; width:0%; background:linear-gradient(90deg,#ff8a4d,#ffd36e);
+    border-radius:2px; transition:width .15s ease-out; }
   #sound { position:fixed; top:10px; right:10px; width:38px; height:38px; border-radius:50%;
     background:rgba(20,24,32,.75); border:2px solid #3a4a6a; color:#ffd36e; font-size:18px;
     display:flex; align-items:center; justify-content:center; cursor:pointer; user-select:none;
@@ -44,16 +52,18 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.57</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.58</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
+  <div id="ragewrap"><div id="ragebar"></div></div>
 </div>
-<div id="hint">PC: WASD 이동 · J 공격(연타=콤보) · K 대시 · 대시중 J=대시공격</div>
+<div id="hint">PC: WASD · J 공격 · K 대시(초반=패링) · L 필살기</div>
 
 <audio id="bgm" loop preload="auto" src="bgm.mp3"></audio>
 <audio id="bgmBoss" loop preload="none" src="bgm_boss.mp3"></audio>
 <div id="sound">♪</div>
 <div id="stick"><div id="knob"></div></div>
 <div id="btns">
+  <div id="sp" class="abtn">필살</div>
   <div id="dash" class="abtn">대시</div>
   <div id="atk" class="abtn">공격</div>
 </div>
@@ -160,7 +170,8 @@ ctx.imageSmoothingEnabled = false;
 const HUD = { hp:document.getElementById('hp'), left:document.getElementById('left'),
               mhp:document.getElementById('mhp'), lv:document.getElementById('lv'),
               xpbar:document.getElementById('xpbar'),
-              gold:document.getElementById('gold') };
+              gold:document.getElementById('gold'),
+              rage:document.getElementById('ragebar') };
 
 // ---- world / camera ----
 const W = 900, H = 600;              // logical world viewport
@@ -198,16 +209,20 @@ stick.addEventListener('touchend',e=>{ for(const t of e.changedTouches) if(t.ide
 
 let atkQueued=false, dashQueued=false;
 const atkBtn=document.getElementById('atk'), dashBtn=document.getElementById('dash');
+const spBtn=document.getElementById('sp');
 atkBtn.addEventListener('touchstart',e=>{e.preventDefault(); atkQueued=true;});
 dashBtn.addEventListener('touchstart',e=>{e.preventDefault(); dashQueued=true;});
 atkBtn.addEventListener('mousedown',()=>atkQueued=true);
 dashBtn.addEventListener('mousedown',()=>dashQueued=true);
+spBtn.addEventListener('touchstart',e=>{e.preventDefault(); trySpecial();});
+spBtn.addEventListener('mousedown',()=>trySpecial());
 
 // ---- entities ----
 const player = {
   x:1200, y:900, r:23, spd:5.0, hp:100, maxhp:100,
   lv:1, xp:0, xpNext:8, atkBonus:0,   // growth
   gold:0, weapon:null, armor:null,   // economy / equipment
+  rage:0,                            // special meter, filled by parrying
   fx:1, fy:0,               // facing
   fang:0,                   // smoothed facing angle (radians)
   breath:0,                 // idle breathing phase
@@ -691,6 +706,8 @@ function updateHUD(){
   if(HUD.mhp) HUD.mhp.textContent = player.maxhp;
   if(HUD.lv) HUD.lv.textContent = player.lv;
   if(HUD.gold) HUD.gold.textContent = player.gold;
+  if(HUD.rage) HUD.rage.style.width = Math.min(100, (player.rage/RAGE_MAX)*100) + '%';
+  if(spBtn) spBtn.classList.toggle('ready', player.rage >= RAGE_MAX);
   if(HUD.xpbar) HUD.xpbar.style.width = Math.min(100, (player.xp/player.xpNext)*100) + '%';
 }
 
@@ -917,7 +934,7 @@ function makeEnemy(kind, x, y){
   const t = ETYPE[kind];
   return {
     kind, x, y, r:t.r, spd:t.spd, hp:t.hp, maxhp:t.hp, color:t.color, touch:t.touch, xp:t.xp, gold:t.gold||1, kb:(t.kb!==undefined?t.kb:1),
-    knx:0, kny:0, hitFlash:0, atkCd:0,
+    knx:0, kny:0, hitFlash:0, atkCd:0, stunT:0,
     state: kind==='shooter'?'cool':'approach', stateT: kind==='shooter'?60:0,
     chgVx:0, chgVy:0, aimX:0, aimY:0, chain:0,
     // --- per-enemy personality so identical types don't move identically ---
@@ -991,6 +1008,69 @@ const COMBO = [
 // dash attack: long forward thrust, piercing, invulnerable — for punching THROUGH a group
 const DASH_ATK = { total:20, active:14, arc:Math.PI*0.5, range:130, dmg:2, knock:22, hs:6 };
 const DASH_SPD = 15, DASH_TIME = 11, DASH_CD = 22, DASH_IFR = 20;
+// ---- PARRY ----
+// No new button: the FIRST few frames of a dash are a parry window. Dashing
+// away early is safe (i-frames already covered that); dashing *into* an
+// incoming blow at the right moment rewards you. Mobile has two buttons and
+// adding a third would crowd the thumb.
+const PARRY_WINDOW = 6;      // frames at the start of a dash that count as parry
+const PARRY_FREEZE = 22;     // how long a parried enemy is stunned
+let parryFlash = 0;
+function inParryWindow(){ return player.dashT > DASH_TIME - PARRY_WINDOW; }
+function onParry(e){
+  parryFlash = 18;
+  hitStop = 10;
+  shake = Math.max(shake, 12);
+  player.iFr = Math.max(player.iFr, 24);
+  player.rage = Math.min(RAGE_MAX, player.rage + 34);   // parrying builds the special
+  if(e){
+    e.stunT = PARRY_FREEZE;
+    if(e.kind==='charger' && e.state==='charge'){ e.state='rest'; e.stateT=40; }
+    const a = Math.atan2(e.y-player.y, e.x-player.x);
+    for(let i=0;i<14;i++){
+      const ang=a+(Math.random()-0.5)*2.2, sp=4+Math.random()*5;
+      effects.push({x:player.x+Math.cos(a)*26, y:player.y+Math.sin(a)*26,
+                    vx:Math.cos(ang)*sp, vy:Math.sin(ang)*sp, t:14, c:'#ffffff', type:'spark'});
+    }
+    effects.push({x:player.x+Math.cos(a)*26, y:player.y+Math.sin(a)*26,
+                  vx:0, vy:0, t:10, c:'#ffffff', type:'flash', r:34});
+  }
+  updateHUD();
+}
+
+// ---- SPECIAL (필살기) ----
+// Fuelled by PARRYING, not by killing. XP already rewards kills; if the special
+// also charged from kills it would just be a second kill-reward and you'd never
+// need to engage with the parry. Making it parry-fed means the special is a
+// reward for reading the fight.
+const RAGE_MAX = 100;
+let specialT = 0;
+function trySpecial(){
+  if(player.rage < RAGE_MAX || specialT>0 || player.atkT>0) return;
+  player.rage = 0;
+  specialT = 34;
+  hitStop = 8;
+  shake = 18;
+  const [ar,ag,ab] = arcRGB();
+  for(const e of enemies){
+    const d = Math.hypot(e.x-player.x, e.y-player.y);
+    if(d < 300){
+      const dmg = 12 + (player.atkBonus + equippedAtk())*3;
+      e.hp -= dmg;
+      e.hitFlash = 10;
+      const a = Math.atan2(e.y-player.y, e.x-player.x);
+      e.knx = Math.cos(a)*26*e.kb; e.kny = Math.sin(a)*26*e.kb;
+      popups.push({x:e.x, y:e.y-e.r-6, val:dmg, t:40, vy:-1.0, big:true});
+      spawnHitFx(e.x, e.y, a, true);
+      if(e.hp<=0){
+        spawnDeathFx(e.x,e.y);
+        gainXP(e.xp||3, e.x, e.y);
+        player.gold += e.gold||1;
+      }
+    }
+  }
+  updateHUD();
+}
 // ---- movement feel tuning ----
 const ACCEL = 0.28;      // how fast we reach target speed (higher = snappier)
 const DECEL = 0.22;      // how fast we stop when input released (lower = more glide)
@@ -1075,6 +1155,7 @@ function update(){
 
   if(keys['j']) atkQueued=true;
   if(keys['k']) dashQueued=true;
+  if(keys['l']) trySpecial();
   if(atkQueued){ tryAttack(); atkQueued=false; }
   if(dashQueued){ tryDash(); dashQueued=false; }
 
@@ -1255,6 +1336,7 @@ function update(){
     setTimeout(()=>{ gameState='cleared'; setUIVisible(false); }, 1800);
   }
   for(const e of enemies){
+    if(e.stunT>0){ e.stunT--; e.hitFlash=Math.max(e.hitFlash,2); continue; }
     // knockback overrides AI
     if(Math.abs(e.knx)>0.1||Math.abs(e.kny)>0.1){
       e.x+=e.knx; e.y+=e.kny; e.knx*=0.8; e.kny*=0.8;
@@ -1438,8 +1520,11 @@ function update(){
 
       // contact damage (all types)
       if(d < e.r+player.r+2 && player.iFr<=0 && e.atkCd<=0){
-        player.hp -= Math.max(1, Math.round(e.touch*(1-damageReduction()))); player.hitFlash=10; player.iFr=20; e.atkCd=30;
-        spawnPlayerHitFx(); updateHUD();
+        if(inParryWindow()){ onParry(e); e.atkCd=30; }
+        else {
+          player.hp -= Math.max(1, Math.round(e.touch*(1-damageReduction()))); player.hitFlash=10; player.iFr=20; e.atkCd=30;
+          spawnPlayerHitFx(); updateHUD();
+        }
         if(e.kind==='charger'&&e.state==='charge'){ e.state='rest'; e.stateT=25; }
         if(player.hp<=0) respawn();
       }
@@ -1510,7 +1595,8 @@ function update(){
     b.spin += b.spinV;                 // tumble through the air
     const dx=player.x-b.x, dy=player.y-b.y;
     if(Math.hypot(dx,dy) < b.r+player.r && player.iFr<=0){
-      player.hp-=Math.max(1, Math.round(8*(1-damageReduction()))); player.hitFlash=10; player.iFr=20; spawnPlayerHitFx();
+      if(inParryWindow()){ onParry(null); b.t=0; }
+      else { player.hp-=Math.max(1, Math.round(8*(1-damageReduction()))); player.hitFlash=10; player.iFr=20; spawnPlayerHitFx(); }
       updateHUD(); b.t=0;
       if(player.hp<=0) respawn();
     }
@@ -1550,19 +1636,20 @@ function update(){
 let runDeaths = 0;
 function respawn(){
   runDeaths++;
-  // Death costs progress but doesn't wipe it — there are no checkpoints yet,
-  // so a full reset would just punish a long run. Lose the current level's XP.
-  player.xp = 0;
-  if(player.lv > 1){
-    player.lv--;
-    player.xpNext = xpToNext(player.lv);
-    player.maxhp = Math.max(100, player.maxhp - 12);
-    player.atkBonus = Math.floor(player.lv/2);
-    player.spd = Math.min(6.2, 5.0 + (player.lv-1)*0.06);
-  }
-  player.hp=player.maxhp;
+  // Death costs GOLD, not levels.
+  //
+  // Dropping a level created a death spiral: you die, get weaker, so the map
+  // that just killed you is now *harder*, so you die again. And it didn't even
+  // hold — the map restarts, so the XP was farmable straight back.
+  // Gold is the right currency to burn: it stings, it's recoverable by playing
+  // well, and it never makes the next attempt harder than the last one.
+  const toll = Math.floor(player.gold * 0.25);
+  player.gold -= toll;
+  if(toll > 0) popups.push({x:player.x, y:player.y-60, val:toll, t:70, vy:-0.7, lost:true});
+  player.hp = player.maxhp;
   bullets=[]; orbs=[]; popups=[];
   updateHUD();
+  saveGame();
   // restart the current map rather than dropping the player into a half-cleared
   // one (and never leave them standing next to a freshly respawned boss)
   loadMap(curMap, 140, MAPS[curMap].h/2);
@@ -1950,6 +2037,26 @@ function draw(){
 
   // damage / heal popups
   ctx.textAlign='center';
+  // parry flash: a hard white ring snapping outward
+  if(parryFlash>0){
+    const t = 1-parryFlash/18;
+    ctx.strokeStyle=`rgba(255,255,255,${(1-t)*0.95})`;
+    ctx.lineWidth=5*(1-t)+1;
+    ctx.beginPath(); ctx.arc(player.x, player.y, 26+t*54, 0, Math.PI*2); ctx.stroke();
+    parryFlash--;
+  }
+  // special: expanding blade-coloured shockwave
+  if(specialT>0){
+    const t = 1-specialT/34;
+    const [sr,sg,sb] = arcRGB();
+    ctx.strokeStyle=`rgba(${sr},${sg},${sb},${(1-t)*0.9})`;
+    ctx.lineWidth=14*(1-t)+2;
+    ctx.beginPath(); ctx.arc(player.x, player.y, 30+t*300, 0, Math.PI*2); ctx.stroke();
+    ctx.strokeStyle=`rgba(255,255,255,${(1-t)*0.6})`;
+    ctx.lineWidth=4;
+    ctx.beginPath(); ctx.arc(player.x, player.y, 20+t*270, 0, Math.PI*2); ctx.stroke();
+    specialT--;
+  }
   // level-up burst: expanding golden ring around the hero
   if(levelFlash>0){
     const t = 1 - levelFlash/60;
@@ -1972,6 +2079,7 @@ function draw(){
       ctx.fillText('LEVEL '+p.val+'!', p.x, p.y);
     }
     else if(p.buy){ ctx.font='bold 15px system-ui'; ctx.fillStyle='#ffd36e'; ctx.fillText(p.val+' 장착!', p.x, p.y); }
+    else if(p.lost){ ctx.font='bold 15px system-ui'; ctx.fillStyle='#e0713a'; ctx.fillText('-'+p.val+'G', p.x, p.y); }
     else if(p.xp){ ctx.font='bold 13px system-ui'; ctx.fillStyle='#6ec1ff'; ctx.fillText('+'+p.val+' XP', p.x, p.y); }
     else if(p.heal){ ctx.font='bold 15px system-ui'; ctx.fillStyle='#4ce690'; ctx.fillText('+'+p.val, p.x, p.y); }
     else { ctx.font=p.big?'bold 20px system-ui':'bold 15px system-ui';
@@ -2163,7 +2271,7 @@ function drawTitle(){
   titleBtns.newg = {x:bx,y:ny,w:bw,h:bh};
 
   ctx.fillStyle='#54637a'; ctx.font='11px system-ui';
-  ctx.fillText('PC: WASD 이동 · J 공격 · K 대시', W/2, H-24);
+  ctx.fillText('PC: WASD · J 공격 · K 대시(초반=패링) · L 필살기', W/2, H-24);
   ctx.textAlign='left';
 }
 
@@ -2204,7 +2312,7 @@ function startNewGame(){
   clearSave();
   player.lv=1; player.xp=0; player.xpNext=8;
   player.maxhp=100; player.hp=100; player.atkBonus=0; player.spd=5.0;
-  player.gold=0; player.weapon=null; player.armor=null;
+  player.gold=0; player.weapon=null; player.armor=null; player.rage=0;
   clearedMaps=[]; runDeaths=0; runStart=Date.now(); bossCleared=false;
   gameState='playing';
   loadMap('field', 140, MAPS.field.h/2);
