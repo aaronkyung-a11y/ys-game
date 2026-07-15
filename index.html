@@ -44,7 +44,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.54</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.55</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
 </div>
 <div id="hint">PC: WASD 이동 · J 공격(연타=콤보) · K 대시 · 대시중 J=대시공격</div>
@@ -346,18 +346,29 @@ function buildFloorPattern(){
 // ---- ITEMS / EQUIPMENT ----
 // Weapons add attack, armour adds max HP and cuts incoming damage. Both feed
 // the existing stat pipeline rather than introducing parallel systems.
+// `blade` = the sprite's blade colour, `arc`/`spark` = its slash trail colour,
+// so upgrading a weapon is visible in the fight, not just on the stat line.
 const ITEMS = {
   // weapons
-  w_rusty:  { slot:'weapon', name:'녹슨 검',   atk:1, cost:0,   desc:'공격 +1' },
-  w_iron:   { slot:'weapon', name:'강철 검',   atk:3, cost:60,  desc:'공격 +3' },
-  w_flame:  { slot:'weapon', name:'화염 검',   atk:6, cost:180, desc:'공격 +6' },
-  w_gold:   { slot:'weapon', name:'황금 검',   atk:10, cost:420, desc:'공격 +10' },
+  w_rusty:  { slot:'weapon', name:'녹슨 검',   atk:1, cost:0,   desc:'공격 +1',
+              blade:'#9aa0a8', arc:[200,205,215], spark:'#b9c0cc' },
+  w_iron:   { slot:'weapon', name:'강철 검',   atk:3, cost:60,  desc:'공격 +3',
+              blade:'#cfd8e6', arc:[190,225,255], spark:'#dbe6f5' },
+  w_flame:  { slot:'weapon', name:'화염 검',   atk:6, cost:180, desc:'공격 +6',
+              blade:'#ff8a3c', arc:[255,140,60],  spark:'#ffb066' },
+  w_gold:   { slot:'weapon', name:'황금 검',   atk:10, cost:420, desc:'공격 +10',
+              blade:'#ffd36e', arc:[255,215,110], spark:'#ffe9a8' },
   // armour
   a_cloth:  { slot:'armor',  name:'천 옷',     hp:0,  dr:0,    cost:0,   desc:'효과 없음' },
   a_leather:{ slot:'armor',  name:'가죽 갑옷', hp:20, dr:0.10, cost:70,  desc:'최대 HP +20 · 피해 -10%' },
   a_chain:  { slot:'armor',  name:'사슬 갑옷', hp:45, dr:0.20, cost:200, desc:'최대 HP +45 · 피해 -20%' },
   a_plate:  { slot:'armor',  name:'판금 갑옷', hp:80, dr:0.30, cost:460, desc:'최대 HP +80 · 피해 -30%' },
 };
+// Fall back to the rusty blade's look when nothing is equipped.
+function weaponDef(){ return ITEMS[player.weapon] || ITEMS.w_rusty; }
+function arcRGB(){ return weaponDef().arc; }
+function sparkCol(){ return weaponDef().spark; }
+function bladeCol(){ return weaponDef().blade; }
 // What each shop stocks — later maps sell better gear.
 const SHOP_STOCK = {
   field: ['w_iron', 'a_leather'],
@@ -644,12 +655,49 @@ ATK_SHEET.src = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAgAAAAGACAYAAADbI
 const ATK_CELL = 128;
 const ATK_COL = { down:0, up:1, left:2, right:3 };
 // draw one swing frame; fi = 0(windup) 1(strike) 2(follow)
+// The swing sheet ships a grey steel blade. Rather than author four sheets,
+// recolour the steel pixels once per weapon and cache the result — the blade is
+// the only near-neutral bright thing on the sprite, so it isolates cleanly.
+const bladeCache = {};
+function bladeSheet(){
+  const id = player.weapon || 'w_rusty';
+  if(bladeCache[id]) return bladeCache[id];
+  if(!atkSheetReady) return ATK_SHEET;
+  const def = ITEMS[id];
+  const c = document.createElement('canvas');
+  c.width = ATK_SHEET.naturalWidth; c.height = ATK_SHEET.naturalHeight;
+  const g = c.getContext('2d');
+  g.drawImage(ATK_SHEET, 0, 0);
+  try{
+    const img = g.getImageData(0,0,c.width,c.height);
+    const d = img.data;
+    // parse the target blade colour once
+    const tr = parseInt(def.blade.slice(1,3),16),
+          tg = parseInt(def.blade.slice(3,5),16),
+          tb = parseInt(def.blade.slice(5,7),16);
+    for(let i=0;i<d.length;i+=4){
+      if(d[i+3]===0) continue;
+      const r=d[i], gg=d[i+1], b=d[i+2];
+      const mx=Math.max(r,gg,b), mn=Math.min(r,gg,b);
+      // steel = bright and nearly desaturated. Skin/tunic/hair all fail this.
+      if(mx>120 && mx-mn<34){
+        const lum = mx/255;                 // keep the blade's own shading
+        d[i]   = Math.min(255, tr*lum + 40*lum*lum);
+        d[i+1] = Math.min(255, tg*lum + 40*lum*lum);
+        d[i+2] = Math.min(255, tb*lum + 40*lum*lum);
+      }
+    }
+    g.putImageData(img,0,0);
+  }catch(e){ return ATK_SHEET; }   // tainted canvas -> fall back silently
+  bladeCache[id] = c;
+  return c;
+}
 function drawSwing(cx, cy, h, dir, fi, tint){
   const col = ATK_COL[dir] ?? 0;
   const sx = col*ATK_CELL, sy = Math.max(0,Math.min(2,fi))*ATK_CELL;
   const scale = h/ATK_CELL, w = ATK_CELL*scale;
   const dx = Math.round(cx - w/2), dy = Math.round(cy - h/2);
-  drawSheetTinted(ATK_SHEET, sx, sy, ATK_CELL, ATK_CELL, dx, dy, w, h, tint);
+  drawSheetTinted(bladeSheet(), sx, sy, ATK_CELL, ATK_CELL, dx, dy, w, h, tint);
 }
 
 const HERO_CELL = 128; // each cell in the 512x512 sheet
@@ -1450,9 +1498,10 @@ function spawnHitFx(x,y,ang,big){
   // Sparks fly along the blade's path, not randomly — impact should read as
   // "the sword went THAT way", which sells the direction of the swing.
   const n = big ? 16 : 10;
+  const sc = sparkCol();          // sparks match the blade that made them
   for(let i=0;i<n;i++){
     const a=ang+(Math.random()-0.5)*1.4, s=3+Math.random()*(big?7:4);
-    effects.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,t:14,c:'#ffd36e',type:'spark'});
+    effects.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,t:14,c:sc,type:'spark'});
   }
   // a few fast white shards perpendicular to the cut — the "slash" read
   for(let i=0;i<(big?6:3);i++){
@@ -1687,7 +1736,8 @@ function draw(){
       // dash attack: filled radial burst showing the whole damage zone
       const rad = sw.range*0.62;
       const a = 0.30*Math.sin(prog*Math.PI);
-      ctx.fillStyle=`rgba(110,193,255,${a})`;
+      const [dr,dg,db] = arcRGB();
+      ctx.fillStyle=`rgba(${dr},${dg},${db},${a})`;
       ctx.beginPath(); ctx.arc(player.x,player.y,rad,0,Math.PI*2); ctx.fill();
       ctx.strokeStyle=`rgba(160,220,255,${0.4*Math.sin(prog*Math.PI)+0.2})`;
       ctx.lineWidth=4;
@@ -1705,7 +1755,10 @@ function draw(){
       const a1 = lead;
       const Rout = sw.range;                    // outer edge = hit range
       const Rin  = sw.range*0.42;               // inner edge (hollow crescent)
-      const gold = player.combo>=2;
+      // Arc takes the equipped weapon's colour. combo-3 stays "bigger", but the
+      // hue now comes from the sword rather than being hardcoded gold.
+      const heavy = player.combo>=2;
+      const [ar,ag,ab] = arcRGB();
       // build the crescent band as a single path (outer arc forward, inner arc back)
       const seg = 14;
       ctx.beginPath();
@@ -1714,15 +1767,16 @@ function draw(){
       ctx.closePath();
       // radial-ish fill: brighter toward the leading edge via layered alpha
       const glow=Math.sin(prog*Math.PI);
-      ctx.fillStyle = gold ? `rgba(255,220,140,${0.16*glow+0.05})` : `rgba(200,230,255,${0.16*glow+0.05})`;
+      ctx.fillStyle = `rgba(${ar},${ag},${ab},${(heavy?0.22:0.16)*glow+0.05})`;
       ctx.fill();
       // soft bright rim on the outer edge, fading to transparent at BOTH ends
       const g = ctx.createLinearGradient(Math.cos(a0)*Rout,Math.sin(a0)*Rout, Math.cos(a1)*Rout,Math.sin(a1)*Rout);
-      g.addColorStop(0, 'rgba(255,255,255,0)');
-      g.addColorStop(0.55, `rgba(255,255,255,${0.45*glow+0.1})`);
+      // white-hot core near the leading edge, bleeding into the weapon's colour
+      g.addColorStop(0, `rgba(${ar},${ag},${ab},0)`);
+      g.addColorStop(0.55, `rgba(${ar},${ag},${ab},${0.45*glow+0.1})`);
       g.addColorStop(0.85, `rgba(255,255,255,${0.5*glow+0.12})`);
-      g.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.strokeStyle=g; ctx.lineWidth = gold?10:7; ctx.lineCap='butt';
+      g.addColorStop(1, `rgba(${ar},${ag},${ab},0)`);
+      ctx.strokeStyle=g; ctx.lineWidth = heavy?10:7; ctx.lineCap='butt';
       ctx.beginPath();
       for(let i=0;i<=seg;i++){ const a=a0+(a1-a0)*i/seg; const x=Math.cos(a)*Rout, y=Math.sin(a)*Rout; i?ctx.lineTo(x,y):ctx.moveTo(x,y); }
       ctx.stroke();
@@ -1732,12 +1786,13 @@ function draw(){
       const tipx = Math.cos(a1)*Rout, tipy = Math.sin(a1)*Rout;
       const tipGlow = Math.sin(prog*Math.PI);
       if(tipGlow > 0.15){
-        const rg = ctx.createRadialGradient(tipx,tipy,0, tipx,tipy, gold?26:18);
+        const R = heavy?26:18;
+        const rg = ctx.createRadialGradient(tipx,tipy,0, tipx,tipy, R);
         rg.addColorStop(0, `rgba(255,255,255,${0.85*tipGlow})`);
-        rg.addColorStop(0.4, gold?`rgba(255,220,140,${0.4*tipGlow})`:`rgba(190,225,255,${0.35*tipGlow})`);
-        rg.addColorStop(1, 'rgba(255,255,255,0)');
+        rg.addColorStop(0.4, `rgba(${ar},${ag},${ab},${(heavy?0.45:0.35)*tipGlow})`);
+        rg.addColorStop(1, `rgba(${ar},${ag},${ab},0)`);
         ctx.fillStyle=rg;
-        ctx.beginPath(); ctx.arc(tipx,tipy, gold?26:18, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(tipx,tipy, R, 0, Math.PI*2); ctx.fill();
       }
       ctx.restore();
     }
@@ -1938,7 +1993,16 @@ function draw(){
       ctx.textAlign='left';
       ctx.fillStyle = have?'#9fe6b5':(afford?'#cfe6ff':'#77777f');
       ctx.font='bold 16px system-ui';
-      ctx.fillText(it.name, x+14, y+26);
+      const nameX = it.slot==='weapon' ? x+30 : x+14;
+      if(it.slot==='weapon'){
+        // little blade swatch so the colour is visible before buying
+        ctx.fillStyle = it.blade;
+        ctx.fillRect(x+14, y+13, 5, 16);
+        ctx.strokeStyle='rgba(0,0,0,.5)'; ctx.lineWidth=1;
+        ctx.strokeRect(x+14, y+13, 5, 16);
+        ctx.fillStyle = have?'#9fe6b5':(afford?'#cfe6ff':'#77777f');
+      }
+      ctx.fillText(it.name, nameX, y+26);
       ctx.fillStyle = have?'#7fbf95':(afford?'#8fa3c0':'#66666e');
       ctx.font='12px system-ui';
       ctx.fillText(it.desc, x+14, y+48);
