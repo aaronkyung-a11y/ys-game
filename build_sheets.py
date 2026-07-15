@@ -91,8 +91,9 @@ def to_cell(f, scale, mirror=False):
 #   key: (sheet_label, row_index) -> flip left/right after auto-detection
 MANUAL_FLIP = {
     ('GOBLIN', 2),   # attack row inverted by auto-detect (confirmed in-game v0.37)
-    ('ORC',    2),   # charge row: axe is pulled BACK, so the weapon-side rule
-                     # inverts. Verified correct in-game at v0.36.
+    # ('ORC', 2) removed at v0.43: the charge row was re-drawn from scratch
+    # (1000049672.jpg) with the axe raised FORWARD, so the old compensation
+    # no longer applies. That row is now patched in separately, not auto-built.
 }
 
 def build(src, out, scale, label):
