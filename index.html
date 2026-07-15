@@ -30,6 +30,10 @@
   #dash { background:#6ec1ff; box-shadow:0 4px 0 #3f7fb0; }
   .abtn:active { transform:translateY(3px); box-shadow:none; }
   #hint { position:fixed; bottom:130px; left:0; right:0; text-align:center; color:#5a6a82; font-size:11px; }
+  #xpwrap { width:180px; height:4px; background:rgba(255,255,255,.10); border-radius:2px;
+    margin:5px auto 0; overflow:hidden; }
+  #xpbar { height:100%; width:0%; background:linear-gradient(90deg,#6ec1ff,#a9e0ff);
+    border-radius:2px; transition:width .18s ease-out; }
   #sound { position:fixed; top:10px; right:10px; width:38px; height:38px; border-radius:50%;
     background:rgba(20,24,32,.75); border:2px solid #3a4a6a; color:#ffd36e; font-size:18px;
     display:flex; align-items:center; justify-content:center; cursor:pointer; user-select:none;
@@ -40,7 +44,9 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.38</span></div>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.39</span>
+  <div id="xpwrap"><div id="xpbar"></div></div>
+</div>
 <div id="hint">PC: WASD 이동 · J 공격(연타=콤보) · K 대시 · 대시중 J=대시공격</div>
 
 <audio id="bgm" loop preload="auto" src="bgm.mp3"></audio>
@@ -110,7 +116,9 @@ addEventListener('visibilitychange', ()=>{
 
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 ctx.imageSmoothingEnabled = false;
-const HUD = { hp:document.getElementById('hp'), left:document.getElementById('left') };
+const HUD = { hp:document.getElementById('hp'), left:document.getElementById('left'),
+              mhp:document.getElementById('mhp'), lv:document.getElementById('lv'),
+              xpbar:document.getElementById('xpbar') };
 
 // ---- world / camera ----
 const W = 900, H = 600;              // logical world viewport
@@ -156,6 +164,7 @@ dashBtn.addEventListener('mousedown',()=>dashQueued=true);
 // ---- entities ----
 const player = {
   x:1200, y:900, r:23, spd:5.0, hp:100, maxhp:100,
+  lv:1, xp:0, xpNext:8, atkBonus:0,   // growth
   fx:1, fy:0,               // facing
   fang:0,                   // smoothed facing angle (radians)
   breath:0,                 // idle breathing phase
@@ -279,6 +288,35 @@ function drawGoblin(cx, cy, h, dir, row, tint){
     ctx.fillStyle=tint; ctx.fillRect(dx,dy,w,h); ctx.restore();
   }
 }
+// ---- growth ----
+// Curve is deliberately gentle: this is a short arcade run, not a grind.
+function xpToNext(lv){ return Math.round(8 * Math.pow(1.55, lv-1)); }
+function gainXP(n, x, y){
+  player.xp += n;
+  popups.push({x:x, y:y-30, val:n, t:40, vy:-1.1, xp:true});
+  while(player.xp >= player.xpNext){
+    player.xp -= player.xpNext;
+    player.lv++;
+    player.xpNext = xpToNext(player.lv);
+    // stat growth: tougher, hits harder, slightly faster
+    player.maxhp += 12;
+    player.hp = player.maxhp;              // level up fully heals — the reward
+    if(player.lv % 2 === 0) player.atkBonus += 1;
+    player.spd = Math.min(6.2, player.spd + 0.06);
+    levelFlash = 60;
+    popups.push({x:player.x, y:player.y-70, val:player.lv, t:75, vy:-0.5, levelup:true});
+    shake = Math.max(shake, 6);
+  }
+  updateHUD();
+}
+let levelFlash = 0;
+function updateHUD(){
+  HUD.hp.textContent = Math.max(0, player.hp);
+  if(HUD.mhp) HUD.mhp.textContent = player.maxhp;
+  if(HUD.lv) HUD.lv.textContent = player.lv;
+  if(HUD.xpbar) HUD.xpbar.style.width = Math.min(100, (player.xp/player.xpNext)*100) + '%';
+}
+
 // 4-way direction from a movement/aim vector
 function dir4(vx, vy){
   if(Math.abs(vx) >= Math.abs(vy)) return vx<0 ? 'left' : 'right';
@@ -455,16 +493,16 @@ function drawSprite(name, cx, cy, scale, flipX, tint){
 
 // enemy archetypes
 const ETYPE = {
-  grunt:   { r:22, spd:2.0, hp:3, color:'#e05a5a', touch:6 },   // basic chaser
-  charger: { r:26, spd:1.1, hp:4, color:'#e0913a', touch:10 },  // slow, then lunges
-  shooter: { r:22, spd:1.0, hp:2, color:'#9a5ae0', touch:5 },   // keeps distance, fires
+  grunt:   { r:22, spd:2.0, hp:3, color:'#e05a5a', touch:6,  xp:3 },   // basic chaser
+  charger: { r:26, spd:1.1, hp:4, color:'#e0913a', touch:10, xp:6 },   // slow, then lunges
+  shooter: { r:22, spd:1.0, hp:2, color:'#9a5ae0', touch:5,  xp:5 },   // keeps distance, fires
 };
 // how hard enemies push each other apart so a group doesn't collapse into one blob
 const SEPARATION = 0.55;
 function makeEnemy(kind, x, y){
   const t = ETYPE[kind];
   return {
-    kind, x, y, r:t.r, spd:t.spd, hp:t.hp, color:t.color, touch:t.touch,
+    kind, x, y, r:t.r, spd:t.spd, hp:t.hp, color:t.color, touch:t.touch, xp:t.xp,
     knx:0, kny:0, hitFlash:0, atkCd:0,
     state: kind==='shooter'?'cool':'approach', stateT: kind==='shooter'?60:0,
     chgVx:0, chgVy:0, aimX:0, aimY:0,
@@ -698,15 +736,21 @@ function update(){
         if(hit && !e._hitThisSwing){
             const ang = Math.atan2(dy,dx);
             e._hitThisSwing = true; // piercing: one hit per enemy per swing (incl. dash)
-            e.hp-=sw.dmg; e.hitFlash=6;
+            const dmg = sw.dmg + player.atkBonus;
+            e.hp-=dmg; e.hitFlash=6;
             e.knx = dx/d*sw.knock; e.kny = dy/d*sw.knock;
             hitStop = sw.hs; shake = sw.hs+2;
             spawnHitFx(e.x,e.y,ang);
-            popups.push({x:e.x, y:e.y-e.r-4, val:sw.dmg, t:32, vy:-0.8,
-                         big: sw.dmg>=2});
+            popups.push({x:e.x, y:e.y-e.r-4, val:dmg, t:32, vy:-0.8,
+                         big: dmg>=3});
             if(e.hp<=0){
               spawnDeathFx(e.x,e.y);
-              if(Math.random()<0.16) orbs.push({x:e.x, y:e.y, r:7, t:600, heal:15, bob:Math.random()*6.28});
+              gainXP(e.xp || 3, e.x, e.y);
+              // Heal drops scale with need: barely any when healthy, generous
+              // when nearly dead. Keeps fights tense without dead-ending a run.
+              const frac = player.hp/player.maxhp;
+              const chance = 0.07 + (1-frac)*0.30;
+              if(Math.random()<chance) orbs.push({x:e.x, y:e.y, r:7, t:600, heal:15, bob:Math.random()*6.28});
             }
         }
       }
@@ -795,7 +839,7 @@ function update(){
       // contact damage (all types)
       if(d < e.r+player.r+2 && player.iFr<=0 && e.atkCd<=0){
         player.hp -= e.touch; player.hitFlash=10; player.iFr=20; e.atkCd=30;
-        shake=8; HUD.hp.textContent=Math.max(0,player.hp);
+        shake=8; updateHUD();
         if(e.kind==='charger'&&e.state==='charge'){ e.state='rest'; e.stateT=25; }
         if(player.hp<=0) respawn();
       }
@@ -866,7 +910,7 @@ function update(){
     const dx=player.x-b.x, dy=player.y-b.y;
     if(Math.hypot(dx,dy) < b.r+player.r && player.iFr<=0){
       player.hp-=8; player.hitFlash=10; player.iFr=20; shake=8;
-      HUD.hp.textContent=Math.max(0,player.hp); b.t=0;
+      updateHUD(); b.t=0;
       if(player.hp<=0) respawn();
     }
     if(b.x<0||b.x>WORLD.w||b.y<0||b.y>WORLD.h) b.t=0;
@@ -886,7 +930,7 @@ function update(){
     if(d < o.r+player.r){
       if(player.hp<player.maxhp){
         player.hp=Math.min(player.maxhp, player.hp+o.heal);
-        HUD.hp.textContent=player.hp;
+        updateHUD();
         popups.push({x:player.x, y:player.y-player.r-6, val:o.heal, t:36, vy:-0.9, heal:true});
         o.t=0;
       }
@@ -899,8 +943,19 @@ function update(){
 }
 
 function respawn(){
-  player.hp=player.maxhp; player.x=WORLD.w/2; player.y=WORLD.h/2; HUD.hp.textContent=player.hp;
+  // Death costs progress but doesn't wipe it — there are no checkpoints yet,
+  // so a full reset would just punish a long run. Lose the current level's XP.
+  player.xp = 0;
+  if(player.lv > 1){
+    player.lv--;
+    player.xpNext = xpToNext(player.lv);
+    player.maxhp = Math.max(100, player.maxhp - 12);
+    player.atkBonus = Math.floor(player.lv/2);
+    player.spd = Math.min(6.2, 5.0 + (player.lv-1)*0.06);
+  }
+  player.hp=player.maxhp; player.x=WORLD.w/2; player.y=WORLD.h/2;
   bullets=[]; orbs=[]; popups=[];
+  updateHUD();
   populateWorld(); updateCamera();
 }
 
@@ -1135,11 +1190,32 @@ function draw(){
 
   // damage / heal popups
   ctx.textAlign='center';
+  // level-up burst: expanding golden ring around the hero
+  if(levelFlash>0){
+    const t = 1 - levelFlash/60;
+    ctx.strokeStyle = `rgba(255,211,110,${(1-t)*0.9})`;
+    ctx.lineWidth = 4*(1-t)+1;
+    ctx.beginPath(); ctx.arc(player.x, player.y, 20+t*90, 0, Math.PI*2); ctx.stroke();
+    ctx.strokeStyle = `rgba(255,255,255,${(1-t)*0.5})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(player.x, player.y, 12+t*60, 0, Math.PI*2); ctx.stroke();
+    levelFlash--;
+  }
+
   for(const p of popups){
     ctx.globalAlpha=Math.min(1,p.t/20);
-    if(p.heal){ ctx.font='bold 15px system-ui'; ctx.fillStyle='#4ce690'; ctx.fillText('+'+p.val, p.x, p.y); }
+    ctx.textAlign='center';
+    if(p.levelup){
+      ctx.font='bold 26px system-ui'; ctx.fillStyle='#ffd36e';
+      ctx.strokeStyle='rgba(0,0,0,.6)'; ctx.lineWidth=4;
+      ctx.strokeText('LEVEL '+p.val+'!', p.x, p.y);
+      ctx.fillText('LEVEL '+p.val+'!', p.x, p.y);
+    }
+    else if(p.xp){ ctx.font='bold 13px system-ui'; ctx.fillStyle='#6ec1ff'; ctx.fillText('+'+p.val+' XP', p.x, p.y); }
+    else if(p.heal){ ctx.font='bold 15px system-ui'; ctx.fillStyle='#4ce690'; ctx.fillText('+'+p.val, p.x, p.y); }
     else { ctx.font=p.big?'bold 20px system-ui':'bold 15px system-ui';
            ctx.fillStyle=p.big?'#ffd36e':'#fff'; ctx.fillText(p.val, p.x, p.y); }
+    ctx.textAlign='left';
     ctx.globalAlpha=1;
   }
   ctx.textAlign='left';
