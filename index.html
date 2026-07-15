@@ -30,14 +30,21 @@
   #dash { background:#6ec1ff; box-shadow:0 4px 0 #3f7fb0; }
   .abtn:active { transform:translateY(3px); box-shadow:none; }
   #hint { position:fixed; bottom:130px; left:0; right:0; text-align:center; color:#5a6a82; font-size:11px; }
+  #sound { position:fixed; top:10px; right:10px; width:38px; height:38px; border-radius:50%;
+    background:rgba(20,24,32,.75); border:2px solid #3a4a6a; color:#ffd36e; font-size:18px;
+    display:flex; align-items:center; justify-content:center; cursor:pointer; user-select:none;
+    z-index:20; touch-action:manipulation; }
+  #sound.off { color:#5a6a82; border-color:#2a3448; }
   @media (min-width:900px){ #stick,#btns{ opacity:.35 } }
 </style>
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.28</span></div>
+<div id="hud">HP <b id="hp">100</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.29</span></div>
 <div id="hint">PC: WASD 이동 · J 공격(연타=콤보) · K 대시 · 대시중 J=대시공격</div>
 
+<audio id="bgm" loop preload="auto" src="bgm.mp3"></audio>
+<div id="sound">♪</div>
 <div id="stick"><div id="knob"></div></div>
 <div id="btns">
   <div id="dash" class="abtn">대시</div>
@@ -69,6 +76,38 @@ if ('serviceWorker' in navigator) {
 }
 </script>
 <script>
+// ---- BGM ----
+// Browsers block autoplay until a user gesture, so we arm playback on the
+// first tap/key rather than calling play() on load (which would just throw).
+const BGM = document.getElementById('bgm');
+const soundBtn = document.getElementById('sound');
+BGM.volume = 0.45;
+let bgmOn = localStorage.getItem('ys_bgm') !== 'off';
+function paintSound(){
+  soundBtn.textContent = bgmOn ? '♪' : '✕';
+  soundBtn.classList.toggle('off', !bgmOn);
+}
+paintSound();
+function startBGM(){
+  if(!bgmOn) return;
+  BGM.play().catch(()=>{});   // still blocked? next gesture will retry
+}
+['pointerdown','keydown','touchstart'].forEach(ev=>{
+  addEventListener(ev, startBGM, { once:false });
+});
+soundBtn.addEventListener('pointerdown', e=>{
+  e.stopPropagation(); e.preventDefault();
+  bgmOn = !bgmOn;
+  localStorage.setItem('ys_bgm', bgmOn ? 'on' : 'off');
+  paintSound();
+  if(bgmOn) BGM.play().catch(()=>{}); else BGM.pause();
+});
+// pause when the tab/app is hidden so it doesn't play in the background
+addEventListener('visibilitychange', ()=>{
+  if(document.hidden) BGM.pause();
+  else if(bgmOn) BGM.play().catch(()=>{});
+});
+
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 ctx.imageSmoothingEnabled = false;
 const HUD = { hp:document.getElementById('hp'), left:document.getElementById('left') };
