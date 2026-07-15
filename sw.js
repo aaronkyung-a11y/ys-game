@@ -1,4 +1,4 @@
-const CACHE = 'ys-v0_33';
+const CACHE = 'ys-v0_34';
 const ASSETS = [
   './',
   './index.html',
