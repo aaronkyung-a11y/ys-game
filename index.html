@@ -44,7 +44,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.53</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.54</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
 </div>
 <div id="hint">PC: WASD 이동 · J 공격(연타=콤보) · K 대시 · 대시중 J=대시공격</div>
@@ -159,7 +159,8 @@ const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 ctx.imageSmoothingEnabled = false;
 const HUD = { hp:document.getElementById('hp'), left:document.getElementById('left'),
               mhp:document.getElementById('mhp'), lv:document.getElementById('lv'),
-              xpbar:document.getElementById('xpbar') };
+              xpbar:document.getElementById('xpbar'),
+              gold:document.getElementById('gold') };
 
 // ---- world / camera ----
 const W = 900, H = 600;              // logical world viewport
@@ -206,6 +207,7 @@ dashBtn.addEventListener('mousedown',()=>dashQueued=true);
 const player = {
   x:1200, y:900, r:23, spd:5.0, hp:100, maxhp:100,
   lv:1, xp:0, xpNext:8, atkBonus:0,   // growth
+  gold:0, weapon:null, armor:null,   // economy / equipment
   fx:1, fy:0,               // facing
   fang:0,                   // smoothed facing angle (radians)
   breath:0,                 // idle breathing phase
@@ -341,6 +343,71 @@ function buildFloorPattern(){
   floorPattern = ctx.createPattern(c, 'repeat');
 }
 
+// ---- ITEMS / EQUIPMENT ----
+// Weapons add attack, armour adds max HP and cuts incoming damage. Both feed
+// the existing stat pipeline rather than introducing parallel systems.
+const ITEMS = {
+  // weapons
+  w_rusty:  { slot:'weapon', name:'녹슨 검',   atk:1, cost:0,   desc:'공격 +1' },
+  w_iron:   { slot:'weapon', name:'강철 검',   atk:3, cost:60,  desc:'공격 +3' },
+  w_flame:  { slot:'weapon', name:'화염 검',   atk:6, cost:180, desc:'공격 +6' },
+  w_gold:   { slot:'weapon', name:'황금 검',   atk:10, cost:420, desc:'공격 +10' },
+  // armour
+  a_cloth:  { slot:'armor',  name:'천 옷',     hp:0,  dr:0,    cost:0,   desc:'효과 없음' },
+  a_leather:{ slot:'armor',  name:'가죽 갑옷', hp:20, dr:0.10, cost:70,  desc:'최대 HP +20 · 피해 -10%' },
+  a_chain:  { slot:'armor',  name:'사슬 갑옷', hp:45, dr:0.20, cost:200, desc:'최대 HP +45 · 피해 -20%' },
+  a_plate:  { slot:'armor',  name:'판금 갑옷', hp:80, dr:0.30, cost:460, desc:'최대 HP +80 · 피해 -30%' },
+};
+// What each shop stocks — later maps sell better gear.
+const SHOP_STOCK = {
+  field: ['w_iron', 'a_leather'],
+  ruins: ['w_flame', 'a_chain'],
+  lair:  ['w_gold', 'a_plate'],
+};
+function equippedAtk(){ return player.weapon ? ITEMS[player.weapon].atk : 0; }
+function equippedHp(){  return player.armor ? (ITEMS[player.armor].hp||0) : 0; }
+function damageReduction(){ return player.armor ? (ITEMS[player.armor].dr||0) : 0; }
+function baseMaxHp(){ return 100 + (player.lv-1)*12; }
+function recalcStats(){
+  const hpFrac = player.maxhp>0 ? player.hp/player.maxhp : 1;
+  player.maxhp = baseMaxHp() + equippedHp();
+  player.hp = Math.min(player.maxhp, Math.max(1, Math.round(player.maxhp*hpFrac)));
+  updateHUD();
+}
+
+// ---- SHOP ----
+// A temporary merchant standing near each map's gate. This is scaffolding —
+// the plan is a proper town later, so the shop lives in its own block that can
+// be lifted out wholesale rather than threaded through the map code.
+let shopOpen = false;
+let shopBtns = [];
+function merchantPos(){
+  const m = MAPS[curMap];
+  if(!m.gate || m.boss) return null;
+  return { x: m.gate.x - 150, y: m.gate.y + m.gate.h/2 };
+}
+function shopStock(){ return SHOP_STOCK[curMap] || []; }
+function canAfford(id){ return player.gold >= ITEMS[id].cost; }
+function owns(id){
+  const it=ITEMS[id];
+  return (it.slot==='weapon' ? player.weapon : player.armor) === id;
+}
+function buyItem(id){
+  const it=ITEMS[id];
+  if(owns(id) || !canAfford(id)) return;
+  player.gold -= it.cost;
+  if(it.slot==='weapon') player.weapon = id; else player.armor = id;
+  recalcStats(); saveGame();
+  popups.push({x:player.x, y:player.y-70, val:it.name, t:60, vy:-0.6, buy:true});
+}
+function sellItem(slot){
+  const cur = slot==='weapon' ? player.weapon : player.armor;
+  if(!cur || ITEMS[cur].cost===0) return;      // can't sell starting gear
+  player.gold += Math.floor(ITEMS[cur].cost*0.5);   // 50% back
+  if(slot==='weapon') player.weapon=null; else player.armor=null;
+  recalcStats(); saveGame();
+}
+
 // ---- SAVE / LOAD ----
 // Autosaves on every map transition and level-up. A run is short, so we only
 // persist progression + which map you're on — not enemy positions, which would
@@ -353,6 +420,7 @@ function saveGame(){
       lv: player.lv, xp: player.xp, xpNext: player.xpNext,
       maxhp: player.maxhp, hp: player.hp,
       atkBonus: player.atkBonus, spd: player.spd,
+      gold: player.gold, weapon: player.weapon, armor: player.armor,
       cleared: clearedMaps,
       t: Date.now()
     }));
@@ -372,6 +440,8 @@ function applySave(s){
   player.lv=s.lv; player.xp=s.xp; player.xpNext=s.xpNext;
   player.maxhp=s.maxhp; player.hp=s.maxhp;      // start the map at full health
   player.atkBonus=s.atkBonus; player.spd=s.spd;
+  player.gold=s.gold||0; player.weapon=s.weapon||null; player.armor=s.armor||null;
+  player.maxhp=baseMaxHp()+equippedHp(); player.hp=player.maxhp;
   clearedMaps = s.cleared || [];
 }
 let clearedMaps = [];
@@ -521,7 +591,7 @@ function gainXP(n, x, y){
     player.lv++;
     player.xpNext = xpToNext(player.lv);
     // stat growth: tougher, hits harder, slightly faster
-    player.maxhp += 12;
+    player.maxhp = baseMaxHp() + equippedHp();
     player.hp = player.maxhp;              // level up fully heals — the reward
     if(player.lv % 2 === 0) player.atkBonus += 1;
     player.spd = Math.min(6.2, player.spd + 0.06);
@@ -537,6 +607,7 @@ function updateHUD(){
   HUD.hp.textContent = Math.max(0, player.hp);
   if(HUD.mhp) HUD.mhp.textContent = player.maxhp;
   if(HUD.lv) HUD.lv.textContent = player.lv;
+  if(HUD.gold) HUD.gold.textContent = player.gold;
   if(HUD.xpbar) HUD.xpbar.style.width = Math.min(100, (player.xp/player.xpNext)*100) + '%';
 }
 
@@ -710,18 +781,20 @@ function drawSprite(name, cx, cy, scale, flipX, tint){
 
 // enemy archetypes
 const ETYPE = {
-  grunt:   { r:22, spd:2.0, hp:3, color:'#e05a5a', touch:6,  xp:3 },   // basic chaser
-  charger: { r:26, spd:1.1, hp:4, color:'#e0913a', touch:10, xp:6 },   // slow, then lunges
-  shooter: { r:22, spd:1.0, hp:2, color:'#9a5ae0', touch:5,  xp:5 },   // keeps distance, fires
-  boss:    { r:52, spd:1.3, hp:150, color:'#c94f4f', touch:18, xp:120 }, // orc lord
-  knight:  { r:34, spd:3.4, hp:130, color:'#e8c86a', touch:14, xp:200 }, // golden knight — fast duelist
+  // kb = knockback resistance multiplier. Heavy things shrug off a sword hit;
+  // being shoved around would rob the big bosses of their weight.
+  grunt:   { r:22, spd:2.0, hp:3, color:'#e05a5a', touch:6,  xp:3,   gold:2,  kb:1.0 },  // basic chaser
+  charger: { r:26, spd:1.1, hp:4, color:'#e0913a', touch:10, xp:6,   gold:5,  kb:0.55 }, // slow, then lunges
+  shooter: { r:22, spd:1.0, hp:2, color:'#9a5ae0', touch:5,  xp:5,   gold:4,  kb:1.0 },  // keeps distance, fires
+  boss:    { r:52, spd:1.3, hp:150, color:'#c94f4f', touch:18, xp:120, gold:80, kb:0 },  // orc lord — immovable
+  knight:  { r:34, spd:3.4, hp:130, color:'#e8c86a', touch:14, xp:200, gold:150, kb:0.2 }, // golden knight — light but braced
 };
 // how hard enemies push each other apart so a group doesn't collapse into one blob
 const SEPARATION = 0.55;
 function makeEnemy(kind, x, y){
   const t = ETYPE[kind];
   return {
-    kind, x, y, r:t.r, spd:t.spd, hp:t.hp, maxhp:t.hp, color:t.color, touch:t.touch, xp:t.xp,
+    kind, x, y, r:t.r, spd:t.spd, hp:t.hp, maxhp:t.hp, color:t.color, touch:t.touch, xp:t.xp, gold:t.gold||1, kb:(t.kb!==undefined?t.kb:1),
     knx:0, kny:0, hitFlash:0, atkCd:0,
     state: kind==='shooter'?'cool':'approach', stateT: kind==='shooter'?60:0,
     chgVx:0, chgVy:0, aimX:0, aimY:0, chain:0,
@@ -993,9 +1066,10 @@ function update(){
             // Scale the bonus with the blow's own weight instead of adding a flat
             // number — a flat +3 turned the 1-dmg opener into a 4 and made the
             // 4-dmg finisher barely worth chaining. Now heavy hits stay heavy.
-            const dmg = sw.dmg + Math.round(player.atkBonus * (sw.dmg/2));
+            const totalAtk = player.atkBonus + equippedAtk();
+            const dmg = sw.dmg + Math.round(totalAtk * (sw.dmg/2));
             e.hp-=dmg; e.hitFlash=6;
-            e.knx = dx/d*sw.knock; e.kny = dy/d*sw.knock;
+            e.knx = dx/d*sw.knock*e.kb; e.kny = dy/d*sw.knock*e.kb;
             // hitstop scales with the blow — the finisher should FEEL heavier
             const kill = e.hp<=0;
             hitStop = sw.hs + (kill?3:0); shake = sw.hs+2+(kill?3:0);
@@ -1005,6 +1079,8 @@ function update(){
             if(e.hp<=0){
               spawnDeathFx(e.x,e.y);
               gainXP(e.xp || 3, e.x, e.y);
+              player.gold += e.gold || 1;
+              updateHUD();
               // Heal drops scale with need: barely any when healthy, generous
               // when nearly dead. Keeps fights tense without dead-ending a run.
               const frac = player.hp/player.maxhp;
@@ -1240,7 +1316,7 @@ function update(){
 
       // contact damage (all types)
       if(d < e.r+player.r+2 && player.iFr<=0 && e.atkCd<=0){
-        player.hp -= e.touch; player.hitFlash=10; player.iFr=20; e.atkCd=30;
+        player.hp -= Math.max(1, Math.round(e.touch*(1-damageReduction()))); player.hitFlash=10; player.iFr=20; e.atkCd=30;
         shake=8; updateHUD();
         if(e.kind==='charger'&&e.state==='charge'){ e.state='rest'; e.stateT=25; }
         if(player.hp<=0) respawn();
@@ -1312,7 +1388,7 @@ function update(){
     b.spin += b.spinV;                 // tumble through the air
     const dx=player.x-b.x, dy=player.y-b.y;
     if(Math.hypot(dx,dy) < b.r+player.r && player.iFr<=0){
-      player.hp-=8; player.hitFlash=10; player.iFr=20; shake=8;
+      player.hp-=Math.max(1, Math.round(8*(1-damageReduction()))); player.hitFlash=10; player.iFr=20; shake=8;
       updateHUD(); b.t=0;
       if(player.hp<=0) respawn();
     }
@@ -1420,6 +1496,30 @@ function draw(){
   }
 
   // walls
+  // ---- merchant (temporary; a proper town will replace this) ----
+  const mp = merchantPos();
+  if(mp){
+    const near = Math.hypot(player.x-mp.x, player.y-mp.y) < 90;
+    const bob = Math.sin(Date.now()*0.004)*2;
+    ctx.fillStyle='rgba(0,0,0,.3)';
+    ctx.beginPath(); ctx.ellipse(mp.x, mp.y+26, 20, 7, 0, 0, Math.PI*2); ctx.fill();
+    // simple robed figure — placeholder art
+    ctx.fillStyle='#4a3a6a'; ctx.fillRect(mp.x-15, mp.y-20+bob, 30, 44);
+    ctx.fillStyle='#5f4d84'; ctx.fillRect(mp.x-15, mp.y-20+bob, 30, 8);
+    ctx.fillStyle='#e8c9a0'; ctx.fillRect(mp.x-9, mp.y-34+bob, 18, 16);
+    ctx.fillStyle='#3a2d52'; ctx.fillRect(mp.x-11, mp.y-38+bob, 22, 7);
+    ctx.fillStyle='#ffd36e'; ctx.font='bold 12px system-ui'; ctx.textAlign='center';
+    ctx.fillText('상인', mp.x, mp.y-46+bob);
+    if(near){
+      const pulse=0.6+0.4*Math.abs(Math.sin(Date.now()*0.006));
+      ctx.strokeStyle=`rgba(255,211,110,${pulse})`; ctx.lineWidth=2;
+      ctx.strokeRect(mp.x-24, mp.y-42+bob, 48, 70);
+      ctx.fillStyle=`rgba(255,211,110,${pulse})`; ctx.font='11px system-ui';
+      ctx.fillText('탭하여 상점 열기', mp.x, mp.y+44);
+    }
+    ctx.textAlign='left';
+  }
+
   // ---- exit gate ----
   const gr = gateRect();
   if(gr){
@@ -1739,6 +1839,7 @@ function draw(){
       ctx.strokeText('LEVEL '+p.val+'!', p.x, p.y);
       ctx.fillText('LEVEL '+p.val+'!', p.x, p.y);
     }
+    else if(p.buy){ ctx.font='bold 15px system-ui'; ctx.fillStyle='#ffd36e'; ctx.fillText(p.val+' 장착!', p.x, p.y); }
     else if(p.xp){ ctx.font='bold 13px system-ui'; ctx.fillStyle='#6ec1ff'; ctx.fillText('+'+p.val+' XP', p.x, p.y); }
     else if(p.heal){ ctx.font='bold 15px system-ui'; ctx.fillStyle='#4ce690'; ctx.fillText('+'+p.val, p.x, p.y); }
     else { ctx.font=p.big?'bold 20px system-ui':'bold 15px system-ui';
@@ -1812,12 +1913,78 @@ function draw(){
     ctx.globalAlpha = 1;
     mapBanner--;
   }
+
+  // ---- shop panel (screen space) ----
+  if(shopOpen){
+    shopBtns = [];
+    ctx.fillStyle='rgba(8,10,16,.88)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    ctx.fillStyle='#ffd36e'; ctx.font='bold 24px system-ui';
+    ctx.fillText('상 인', W/2, 44);
+    ctx.fillStyle='#ffd36e'; ctx.font='bold 15px system-ui';
+    ctx.fillText('보유 골드  ' + player.gold + 'G', W/2, 68);
+
+    const stock = shopStock();
+    const cardW=Math.min(300, W/2-30), cardH=92;
+    let y=92;
+    for(const id of stock){
+      const it=ITEMS[id];
+      const x=(W-cardW)/2;
+      const have=owns(id), afford=canAfford(id);
+      ctx.fillStyle = have ? '#22331f' : (afford ? '#2b3a52' : '#2a2a30');
+      ctx.fillRect(x,y,cardW,cardH);
+      ctx.strokeStyle = have ? '#4ce690' : (afford ? '#6ec1ff' : '#4a4a55');
+      ctx.lineWidth=2; ctx.strokeRect(x,y,cardW,cardH);
+      ctx.textAlign='left';
+      ctx.fillStyle = have?'#9fe6b5':(afford?'#cfe6ff':'#77777f');
+      ctx.font='bold 16px system-ui';
+      ctx.fillText(it.name, x+14, y+26);
+      ctx.fillStyle = have?'#7fbf95':(afford?'#8fa3c0':'#66666e');
+      ctx.font='12px system-ui';
+      ctx.fillText(it.desc, x+14, y+48);
+      ctx.textAlign='right';
+      ctx.fillStyle = have ? '#4ce690' : (afford?'#ffd36e':'#66666e');
+      ctx.font='bold 15px system-ui';
+      ctx.fillText(have ? '장착중' : it.cost+'G', x+cardW-14, y+26);
+      if(!have && afford){
+        ctx.fillStyle='#6ec1ff'; ctx.font='11px system-ui';
+        ctx.fillText('탭하여 구매', x+cardW-14, y+70);
+      }
+      if(!have && afford) shopBtns.push({x,y,w:cardW,h:cardH,act:'buy',id});
+      y += cardH+12;
+    }
+
+    // currently equipped + sell
+    ctx.textAlign='center'; ctx.fillStyle='#8fa3c0'; ctx.font='12px system-ui';
+    const eqW = player.weapon?ITEMS[player.weapon].name:'없음';
+    const eqA = player.armor?ITEMS[player.armor].name:'없음';
+    ctx.fillText(`장착  무기: ${eqW}   방어구: ${eqA}`, W/2, y+18);
+    let sy=y+30;
+    for(const [slot,cur,label] of [['weapon',player.weapon,'무기'],['armor',player.armor,'방어구']]){
+      if(cur && ITEMS[cur].cost>0){
+        const bw=140, bx=(W-bw)/2 + (slot==='weapon'?-76:76);
+        ctx.fillStyle='#3a2a2a'; ctx.fillRect(bx,sy,bw,30);
+        ctx.strokeStyle='#c98a6e'; ctx.lineWidth=1.5; ctx.strokeRect(bx,sy,bw,30);
+        ctx.fillStyle='#e6b8a0'; ctx.font='12px system-ui';
+        ctx.fillText(`${label} 팔기 +${Math.floor(ITEMS[cur].cost*0.5)}G`, bx+bw/2, sy+20);
+        shopBtns.push({x:bx,y:sy,w:bw,h:30,act:'sell',slot});
+      }
+    }
+
+    const cw2=170, cx2=(W-cw2)/2, cy2=H-46;
+    ctx.fillStyle='#3a3222'; ctx.fillRect(cx2,cy2,cw2,34);
+    ctx.strokeStyle='#ffd36e'; ctx.lineWidth=2; ctx.strokeRect(cx2,cy2,cw2,34);
+    ctx.fillStyle='#ffd36e'; ctx.font='bold 14px system-ui';
+    ctx.fillText('닫기', W/2, cy2+22);
+    shopBtns.push({x:cx2,y:cy2,w:cw2,h:34,act:'close'});
+    ctx.textAlign='left';
+  }
 }
 
 // ---- loop ----
 updateCamera();
 function loop(){
-  if(gameState==='playing') update();
+  if(gameState==='playing' && !shopOpen) update();
   draw();
   if(gameState==='title') drawTitle();
   else if(gameState==='cleared') drawClear();
@@ -1896,6 +2063,7 @@ function startNewGame(){
   clearSave();
   player.lv=1; player.xp=0; player.xpNext=8;
   player.maxhp=100; player.hp=100; player.atkBonus=0; player.spd=5.0;
+  player.gold=0; player.weapon=null; player.armor=null;
   clearedMaps=[]; runDeaths=0; runStart=Date.now(); bossCleared=false;
   gameState='playing';
   loadMap('field', 140, MAPS.field.h/2);
@@ -1911,10 +2079,34 @@ function continueGame(){
 }
 // menu clicks — screen space, so read the raw canvas coords
 cv.addEventListener('pointerdown', e=>{
-  if(gameState==='playing') return;
   const r=cv.getBoundingClientRect();
   const x=(e.clientX-r.left)*(W/r.width), y=(e.clientY-r.top)*(H/r.height);
   const hit=(b)=> b && x>=b.x && x<=b.x+b.w && y>=b.y && y<=b.y+b.h;
+
+  if(shopOpen){
+    for(const b of shopBtns){
+      if(hit(b)){
+        if(b.act==='buy') buyItem(b.id);
+        else if(b.act==='sell') sellItem(b.slot);
+        else if(b.act==='close'){ shopOpen=false; setUIVisible(true); }
+        return;
+      }
+    }
+    return;   // swallow taps behind the panel
+  }
+
+  if(gameState==='playing'){
+    // tap the merchant to open the shop
+    const mp = merchantPos();
+    if(mp && Math.hypot(player.x-mp.x, player.y-mp.y) < 90){
+      const sx = mp.x - cam.x, sy = mp.y - cam.y;
+      if(Math.abs(x-sx)<44 && Math.abs(y-sy)<60){
+        shopOpen=true; setUIVisible(false);
+      }
+    }
+    return;
+  }
+
   if(hit(titleBtns.cont)) continueGame();
   else if(hit(titleBtns.newg)) startNewGame();
 });
