@@ -78,7 +78,9 @@ CELL=128
 # but breaks on ATTACK rows: the body twists and the weapon extends, so the
 # "eye is on the facing side" rule stops holding. These were checked in-game.
 MANUAL_FLIP = {
-    ('GOBLIN', 2),   # attack row inverted by auto-detect (confirmed in-game v0.37)
+    # ('GOBLIN', 2) removed at v0.51: this override kept re-inverting the attack
+    # row on every rebuild. Verified in-game that the un-flipped auto-detect
+    # result is correct — the dagger then matches the walk rows' direction.
     # ORC charge row is not auto-built — it uses redrawn art patched in after.
 }
 
