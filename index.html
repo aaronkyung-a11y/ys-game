@@ -40,7 +40,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.30</span></div>
+<div id="hud">HP <b id="hp">100</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.31</span></div>
 <div id="hint">PC: WASD 이동 · J 공격(연타=콤보) · K 대시 · 대시중 J=대시공격</div>
 
 <audio id="bgm" loop preload="auto" src="bgm.mp3"></audio>
@@ -267,6 +267,25 @@ function drawGoblin(cx, cy, h, dir, row, tint){
 function dir4(vx, vy){
   if(Math.abs(vx) >= Math.abs(vy)) return vx<0 ? 'left' : 'right';
   return vy<0 ? 'up' : 'down';
+}
+
+// A thrown rock: irregular polygon so it reads as stone, not a magic orb.
+// Shape is baked once at spawn so it stays the same rock while it tumbles.
+function makeRock(x, y, vx, vy){
+  const r = 5;
+  const n = 6 + Math.floor(Math.random()*2);   // 6-7 sided chunk
+  const shape = [];
+  for(let i=0;i<n;i++){
+    const a = (i/n)*Math.PI*2;
+    const rad = r * (0.72 + Math.random()*0.5); // jagged, not round
+    shape.push([Math.cos(a)*rad, Math.sin(a)*rad]);
+  }
+  return {
+    x, y, vx, vy, r, t:260,
+    shape,
+    spin: Math.random()*Math.PI*2,
+    spinV: (Math.random()<0.5?-1:1) * (0.12 + Math.random()*0.14)
+  };
 }
 
 // ---- attack swing sheet (4 cols: down/up/left/right x 3 rows: windup/strike/follow) ----
@@ -717,7 +736,7 @@ function update(){
           // stand still, telegraph, then fire
           e.stateT--;
           if(e.stateT<=0){
-            bullets.push({x:e.x, y:e.y, vx:dx/d*2.1, vy:dy/d*2.1, r:5, t:260});
+            bullets.push(makeRock(e.x, e.y, dx/d*2.1, dy/d*2.1));
             e.state='cool'; e.stateT=110+Math.random()*40;
           }
         } else if(e.state==='cool'){
@@ -814,6 +833,7 @@ function update(){
   bullets = bullets.filter(b=>b.t>0);
   for(const b of bullets){
     b.x+=b.vx; b.y+=b.vy; b.t--;
+    b.spin += b.spinV;                 // tumble through the air
     const dx=player.x-b.x, dy=player.y-b.y;
     if(Math.hypot(dx,dy) < b.r+player.r && player.iFr<=0){
       player.hp-=8; player.hitFlash=10; player.iFr=20; shake=8;
@@ -909,12 +929,30 @@ function draw(){
     ctx.globalAlpha=1;
   }
 
-  // enemy bullets
+  // enemy projectiles — thrown rocks (tumbling irregular chunks, not orbs)
   for(const b of bullets){
-    ctx.fillStyle='#c77aff';
-    ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='rgba(199,122,255,.35)';
-    ctx.beginPath(); ctx.arc(b.x,b.y,b.r+3,0,Math.PI*2); ctx.fill();
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(b.spin || 0);
+    // soft ground-ish shadow so it reads as a physical object in flight
+    ctx.fillStyle='rgba(0,0,0,.25)';
+    ctx.beginPath(); ctx.ellipse(1, 3, b.r+1, b.r*0.6, 0, 0, Math.PI*2); ctx.fill();
+    // rock body: fixed irregular polygon (per-rock seed keeps its shape stable)
+    const pts = b.shape;
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.closePath();
+    ctx.fillStyle='#8a8a92'; ctx.fill();
+    ctx.strokeStyle='#3a3a44'; ctx.lineWidth=1.5; ctx.stroke();
+    // lit facet for a bit of dimension
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    ctx.lineTo(pts[1][0], pts[1][1]);
+    ctx.lineTo(pts[2][0]*0.3, pts[2][1]*0.3);
+    ctx.closePath();
+    ctx.fillStyle='#b4b4bc'; ctx.fill();
+    ctx.restore();
   }
 
   // enemies
@@ -930,15 +968,17 @@ function draw(){
       ctx.beginPath(); ctx.moveTo(e.x,e.y);
       ctx.lineTo(e.x+adx/al*90, e.y+ady/al*90); ctx.stroke();
     }
-    // shooter aim telegraph — line to locked aim point + growing dot
+    // shooter aim telegraph — throw line to locked aim point (reads as "he's about to hurl a rock")
     if(e.kind==='shooter' && e.state==='aim'){
       const t=1-e.stateT/40;
-      ctx.strokeStyle=`rgba(199,122,255,${0.25+0.5*t})`; ctx.lineWidth=2;
-      ctx.setLineDash([6,6]);
+      ctx.strokeStyle=`rgba(200,200,210,${0.20+0.45*t})`; ctx.lineWidth=2;
+      ctx.setLineDash([5,7]);
       ctx.beginPath(); ctx.moveTo(e.x,e.y); ctx.lineTo(e.aimX,e.aimY); ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle=`rgba(199,122,255,${0.4+0.5*t})`;
-      ctx.beginPath(); ctx.arc(e.x,e.y,e.r+4+4*t,0,Math.PI*2); ctx.stroke();
+      // the rock he's about to throw, cocked and growing as he winds up
+      ctx.fillStyle=`rgba(150,150,160,${0.5+0.5*t})`;
+      ctx.beginPath(); ctx.arc(e.x, e.y-e.r-6, 3+2.5*t, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle=`rgba(60,60,70,${0.5+0.5*t})`; ctx.lineWidth=1.2; ctx.stroke();
     }
     // body sprite (flip to face the player); white tint on hit, orange tint mid-charge
     const facingLeft = (player.x - e.x) < 0;
