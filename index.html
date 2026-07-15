@@ -44,7 +44,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.56</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.57</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
 </div>
 <div id="hint">PC: WASD 이동 · J 공격(연타=콤보) · K 대시 · 대시중 J=대시공격</div>
@@ -352,11 +352,11 @@ const ITEMS = {
   // weapons
   w_rusty:  { slot:'weapon', name:'녹슨 검',   atk:1, cost:0,   desc:'공격 +1',
               blade:'#9aa0a8', arc:[200,205,215], spark:'#b9c0cc' },
-  w_iron:   { slot:'weapon', name:'강철 검',   atk:3, cost:60,  desc:'공격 +3',
+  w_iron:   { slot:'weapon', name:'강철 검',   atk:3, cost:70,  desc:'공격 +3',
               blade:'#cfd8e6', arc:[190,225,255], spark:'#dbe6f5' },
-  w_flame:  { slot:'weapon', name:'화염 검',   atk:6, cost:180, desc:'공격 +6',
+  w_flame:  { slot:'weapon', name:'화염 검',   atk:6, cost:150, desc:'공격 +6',
               blade:'#ff8a3c', arc:[255,140,60],  spark:'#ffb066' },
-  w_gold:   { slot:'weapon', name:'황금 검',   atk:10, cost:420, desc:'공격 +10',
+  w_gold:   { slot:'weapon', name:'황금 검',   atk:10, cost:300, desc:'공격 +10',
               blade:'#ffd36e', arc:[255,215,110], spark:'#ffe9a8' },
   // armour
   // armour. `chest` recolours the tunic's torso only (not the trousers), and
@@ -364,11 +364,11 @@ const ITEMS = {
   // so the clearest place to show it off is the moment you take a hit.
   a_cloth:  { slot:'armor',  name:'천 옷',     hp:0,  dr:0,    cost:0,   desc:'효과 없음',
               chest:null, hitFx:'cloth' },
-  a_leather:{ slot:'armor',  name:'가죽 갑옷', hp:20, dr:0.10, cost:70,  desc:'최대 HP +20 · 피해 -10%',
+  a_leather:{ slot:'armor',  name:'가죽 갑옷', hp:20, dr:0.10, cost:80,  desc:'최대 HP +20 · 피해 -10%',
               chest:'#8a5a32', hitFx:'leather' },
-  a_chain:  { slot:'armor',  name:'사슬 갑옷', hp:45, dr:0.20, cost:200, desc:'최대 HP +45 · 피해 -20%',
+  a_chain:  { slot:'armor',  name:'사슬 갑옷', hp:45, dr:0.20, cost:170, desc:'최대 HP +45 · 피해 -20%',
               chest:'#8f96a3', hitFx:'chain' },
-  a_plate:  { slot:'armor',  name:'판금 갑옷', hp:80, dr:0.30, cost:460, desc:'최대 HP +80 · 피해 -30%',
+  a_plate:  { slot:'armor',  name:'판금 갑옷', hp:80, dr:0.30, cost:340, desc:'최대 HP +80 · 피해 -30%',
               chest:'#d8dde8', hitFx:'plate' },
 };
 // Fall back to the rusty blade's look when nothing is equipped.
@@ -905,11 +905,11 @@ function drawSprite(name, cx, cy, scale, flipX, tint){
 const ETYPE = {
   // kb = knockback resistance multiplier. Heavy things shrug off a sword hit;
   // being shoved around would rob the big bosses of their weight.
-  grunt:   { r:22, spd:2.0, hp:3, color:'#e05a5a', touch:6,  xp:3,   gold:2,  kb:1.0 },  // basic chaser
-  charger: { r:26, spd:1.1, hp:4, color:'#e0913a', touch:10, xp:6,   gold:5,  kb:0.55 }, // slow, then lunges
-  shooter: { r:22, spd:1.0, hp:2, color:'#9a5ae0', touch:5,  xp:5,   gold:4,  kb:1.0 },  // keeps distance, fires
-  boss:    { r:52, spd:1.3, hp:150, color:'#c94f4f', touch:18, xp:120, gold:80, kb:0 },  // orc lord — immovable
-  knight:  { r:34, spd:3.4, hp:130, color:'#e8c86a', touch:14, xp:200, gold:150, kb:0.2 }, // golden knight — light but braced
+  grunt:   { r:22, spd:2.0, hp:3, color:'#e05a5a', touch:6,  xp:3,   gold:6,  kb:1.0 },  // basic chaser
+  charger: { r:26, spd:1.1, hp:4, color:'#e0913a', touch:10, xp:6,   gold:16, kb:0.55 }, // slow, then lunges
+  shooter: { r:22, spd:1.5, hp:2, color:'#9a5ae0', touch:5,  xp:5,   gold:12, kb:1.0 },  // keeps distance, fires
+  boss:    { r:52, spd:1.3, hp:150, color:'#c94f4f', touch:18, xp:120, gold:200, kb:0 },  // orc lord — immovable
+  knight:  { r:34, spd:4.2, hp:420, color:'#e8c86a', touch:26, xp:200, gold:400, kb:0.2 }, // golden knight — light but braced
 };
 // how hard enemies push each other apart so a group doesn't collapse into one blob
 const SEPARATION = 0.55;
@@ -1312,7 +1312,7 @@ function update(){
         } else if(e.state==='thrust'){
           // short, fast lunge — chained several times
           if(e.stateT<=0){
-            const sp=rage?13:10;
+            const sp=rage?16:12;
             e.chgVx=dx/d*sp; e.chgVy=dy/d*sp;
             e.state='lunge'; e.stateT=9;
           }
@@ -1321,7 +1321,7 @@ function update(){
           if(e.stateT<=0 || pointInWall(e.x+e.chgVx*2, e.y+e.chgVy*2)){
             e.combo--;
             if(e.combo>0){ e.state='thrust'; e.stateT = rage?8:14; }
-            else { e.state='rest'; e.stateT = rage?18:30; }
+            else { e.state='rest'; e.stateT = rage?12:20; }
           }
         } else if(e.state==='sweep'){
           // spinning slash: ring of blade energy, punishes standing close
@@ -1349,10 +1349,10 @@ function update(){
           else { e.x+=px2*e.orbitDir*e.spd*0.5; e.y+=py2*e.orbitDir*e.spd*0.5; }
           if(e.stateT<=0){
             const roll=Math.random();
-            if(roll<0.40){ e.state='blink'; e.stateT = rage?10:18; }
-            else if(roll<0.68){ e.state='thrust'; e.stateT = rage?10:18; e.combo = rage?3:2; }
-            else if(roll<0.86){ e.state='sweep'; e.stateT = rage?16:26; }
-            else { e.state='beam'; e.stateT = rage?14:24; }
+            if(roll<0.42){ e.state='blink'; e.stateT = rage?7:13; }
+            else if(roll<0.70){ e.state='thrust'; e.stateT = rage?7:13; e.combo = rage?4:3; }
+            else if(roll<0.87){ e.state='sweep'; e.stateT = rage?12:20; }
+            else { e.state='beam'; e.stateT = rage?10:18; }
           }
         }
       } else if(e.kind==='boss'){
@@ -1788,7 +1788,10 @@ function draw(){
       drawOrc(e.x, e.y, 145, e.face, row, tint);
     } else if(e.kind==='shooter' && thrSheetReady){
       // throw pose while aiming; scurrying walk otherwise
-      const row = (e.state==='aim') ? 2 : (Math.floor(e.walkT/5)%2);  // faster: scrawny
+      // Scurrying gait: this one moves slowly (spd 1.0) but should look busy,
+      // so its cycle is driven harder than distance alone would give — otherwise
+      // it glides with near-frozen legs.
+      const row = (e.state==='aim') ? 2 : (Math.floor(e.walkT/2.2)%2);
       drawThrower(e.x, e.y, 92, e.face, row, tint);
     } else {
       const escale = e.kind==='charger' ? 5.94 : 5.4;
