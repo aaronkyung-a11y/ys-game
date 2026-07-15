@@ -44,7 +44,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.45</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.46</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
 </div>
 <div id="hint">PC: WASD 이동 · J 공격(연타=콤보) · K 대시 · 대시중 J=대시공격</div>
@@ -833,9 +833,13 @@ function update(){
     const sw = player.sw || COMBO[player.combo];
     const activeFrom = sw.total - (sw.total-sw.active);
     if(player.atkT <= activeFrom && player.atkT > activeFrom - sw.active){
+      // Front-load the lunge: the body snaps forward AS the blade whips through,
+      // then coasts. A flat push made every frame of the swing feel the same.
+      const t = 1 - (activeFrom - player.atkT)/sw.active;   // 1 -> 0 across the window
+      const punch = 0.35 + 0.9*t*t;
       const lunge = (player.dashAtk ? 3.2 : 1.5);
-      player.vx += player.fx*lunge*0.35;
-      player.vy += player.fy*lunge*0.35;
+      player.vx += player.fx*lunge*punch;
+      player.vy += player.fy*lunge*punch;
     }
     player.vx *= 0.80; player.vy *= 0.80;     // bleed off quickly while swinging
   } else {
@@ -915,8 +919,10 @@ function update(){
             const dmg = sw.dmg + player.atkBonus;
             e.hp-=dmg; e.hitFlash=6;
             e.knx = dx/d*sw.knock; e.kny = dy/d*sw.knock;
-            hitStop = sw.hs; shake = sw.hs+2;
-            spawnHitFx(e.x,e.y,ang);
+            // hitstop scales with the blow — the finisher should FEEL heavier
+            const kill = e.hp<=0;
+            hitStop = sw.hs + (kill?3:0); shake = sw.hs+2+(kill?3:0);
+            spawnHitFx(e.x,e.y,ang, dmg>=3 || kill);
             popups.push({x:e.x, y:e.y-e.r-4, val:dmg, t:32, vy:-0.8,
                          big: dmg>=3});
             if(e.hp<=0){
@@ -1166,7 +1172,11 @@ function update(){
 
   // ---- effects ----
   effects = effects.filter(f=>f.t>0);
-  for(const f of effects){ f.t--; f.x+=f.vx||0; f.y+=f.vy||0; }
+  for(const f of effects){
+    f.t--; f.x+=f.vx||0; f.y+=f.vy||0;
+    // sparks lose energy instead of flying at constant speed forever
+    if(f.vx!==undefined){ f.vx*=0.88; f.vy*=0.88; }
+  }
 
   // ---- health orbs ----
   orbs = orbs.filter(o=>o.t>0);
@@ -1208,11 +1218,22 @@ function respawn(){
   loadMap(curMap, 140, MAPS[curMap].h/2);
 }
 
-function spawnHitFx(x,y,ang){
-  for(let i=0;i<9;i++){
-    const a=ang+(Math.random()-0.5)*1.4, s=3+Math.random()*4;
+function spawnHitFx(x,y,ang,big){
+  // Sparks fly along the blade's path, not randomly — impact should read as
+  // "the sword went THAT way", which sells the direction of the swing.
+  const n = big ? 16 : 10;
+  for(let i=0;i<n;i++){
+    const a=ang+(Math.random()-0.5)*1.4, s=3+Math.random()*(big?7:4);
     effects.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,t:14,c:'#ffd36e',type:'spark'});
   }
+  // a few fast white shards perpendicular to the cut — the "slash" read
+  for(let i=0;i<(big?6:3);i++){
+    const a=ang+(Math.random()<0.5?Math.PI/2:-Math.PI/2)+(Math.random()-0.5)*0.5;
+    const s=5+Math.random()*5;
+    effects.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,t:9,c:'#ffffff',type:'spark'});
+  }
+  // brief impact flash at the contact point
+  effects.push({x,y,vx:0,vy:0,t:big?9:6,c:'#ffffff',type:'flash',r:big?26:16});
 }
 function spawnDeathFx(x,y){
   for(let i=0;i<12;i++){
@@ -1395,7 +1416,13 @@ function draw(){
   // attack visuals
   if(player.atkT>0 && player.sw){
     const sw=player.sw;
-    const prog=1-(player.atkT/sw.total);
+    const linear = 1-(player.atkT/sw.total);
+    // A real swing isn't linear: the blade hangs back on the windup, WHIPS
+    // through the strike, then decelerates into the follow-through. Ease the
+    // sweep with a cubic so the middle third covers most of the arc.
+    const prog = linear<0.5
+      ? 4*linear*linear*linear
+      : 1 - Math.pow(-2*linear+2, 3)/2;
     if(player.dashAtk){
       // dash attack: filled radial burst showing the whole damage zone
       const rad = sw.range*0.62;
@@ -1439,6 +1466,19 @@ function draw(){
       ctx.beginPath();
       for(let i=0;i<=seg;i++){ const a=a0+(a1-a0)*i/seg; const x=Math.cos(a)*Rout, y=Math.sin(a)*Rout; i?ctx.lineTo(x,y):ctx.moveTo(x,y); }
       ctx.stroke();
+
+      // blade tip: a bright point riding the leading edge. The eye tracks this,
+      // so it's what actually reads as "the sword moved fast".
+      const tipx = Math.cos(a1)*Rout, tipy = Math.sin(a1)*Rout;
+      const tipGlow = Math.sin(prog*Math.PI);
+      if(tipGlow > 0.15){
+        const rg = ctx.createRadialGradient(tipx,tipy,0, tipx,tipy, gold?26:18);
+        rg.addColorStop(0, `rgba(255,255,255,${0.85*tipGlow})`);
+        rg.addColorStop(0.4, gold?`rgba(255,220,140,${0.4*tipGlow})`:`rgba(190,225,255,${0.35*tipGlow})`);
+        rg.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle=rg;
+        ctx.beginPath(); ctx.arc(tipx,tipy, gold?26:18, 0, Math.PI*2); ctx.fill();
+      }
       ctx.restore();
     }
   }
@@ -1490,9 +1530,29 @@ function draw(){
   // effects
   for(const f of effects){
     if(f.type==='spark'){
-      ctx.globalAlpha=Math.min(1,f.t/12);
-      ctx.fillStyle=f.c; ctx.fillRect(f.x-2,f.y-2,4,4);
+      const a = Math.min(1,f.t/12);
+      // streak the spark along its own velocity — a moving point reads as speed
+      const sp = Math.hypot(f.vx||0, f.vy||0);
+      ctx.globalAlpha=a;
+      if(sp>1.5){
+        ctx.strokeStyle=f.c; ctx.lineWidth=2.5; ctx.lineCap='round';
+        ctx.beginPath();
+        ctx.moveTo(f.x, f.y);
+        ctx.lineTo(f.x-(f.vx||0)*0.9, f.y-(f.vy||0)*0.9);
+        ctx.stroke();
+      } else {
+        ctx.fillStyle=f.c; ctx.fillRect(f.x-2,f.y-2,4,4);
+      }
       ctx.globalAlpha=1;
+    } else if(f.type==='flash'){
+      const a = Math.min(1, f.t/6);
+      const r = (f.r||16) * (1.4 - 0.4*a);
+      const rg = ctx.createRadialGradient(f.x,f.y,0, f.x,f.y,r);
+      rg.addColorStop(0, `rgba(255,255,255,${0.9*a})`);
+      rg.addColorStop(0.5, `rgba(255,235,180,${0.4*a})`);
+      rg.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle=rg;
+      ctx.beginPath(); ctx.arc(f.x,f.y,r,0,Math.PI*2); ctx.fill();
     }
   }
 
