@@ -35,7 +35,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.26</span></div>
+<div id="hud">HP <b id="hp">100</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.27</span></div>
 <div id="hint">PC: WASD 이동 · J 공격(연타=콤보) · K 대시 · 대시중 J=대시공격</div>
 
 <div id="stick"><div id="knob"></div></div>
@@ -46,7 +46,26 @@
 
 <script>
 if ('serviceWorker' in navigator) {
-  addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(()=>{}));
+  addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      reg.update();                          // check for a new build on every load
+      setInterval(()=>reg.update(), 60000);  // and periodically while playing
+      reg.addEventListener('updatefound', () => {
+        const nw = reg.installing;
+        if(!nw) return;
+        nw.addEventListener('statechange', () => {
+          if(nw.state === 'installed' && navigator.serviceWorker.controller){
+            nw.postMessage('SKIP_WAITING');  // activate the new build now
+          }
+        });
+      });
+    }).catch(()=>{});
+    // when the new worker takes over, reload once so the fresh build is running
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if(reloaded) return; reloaded = true; location.reload();
+    });
+  });
 }
 </script>
 <script>
