@@ -73,28 +73,45 @@ def feet_cx(img):
     return (min(xs)+max(xs))//2 if xs else (bb[0]+bb[2])//2
 
 CELL=128
+# ---------- MANUAL OVERRIDES (user-verified) ----------
+# Auto facing detection reads the eye position, which is reliable on WALK rows
+# but breaks on ATTACK rows: the body twists and the weapon extends, so the
+# "eye is on the facing side" rule stops holding. These were checked in-game.
+MANUAL_FLIP = {
+    ('GOBLIN', 2),   # attack row inverted by auto-detect (confirmed in-game v0.37)
+    # ORC charge row is not auto-built — it uses redrawn art patched in after.
+}
+
 def to_cell(f, scale, mirror=False):
+    """Fit a sprite into one cell without clipping.
+
+    Two bugs fixed here:
+      1. Scaling by HEIGHT only clipped wide poses (weapon thrust sideways is
+         wider than tall). Now we fit both axes and take the smaller factor.
+      2. Anchoring x on the FEET pushed extended weapons off the cell — the
+         feet aren't the centre of the artwork when a sword is out. Anchor on
+         the sprite's own bbox centre, then nudge toward the feet only as far
+         as there is spare room.
+    """
     if mirror: f=f.transpose(Image.FLIP_LEFT_RIGHT)
     bb=f.split()[3].getbbox()
     if not bb: return Image.new('RGBA',(CELL,CELL),(0,0,0,0))
     fc=feet_cx(f); crop=f.crop(bb)
-    sc=(CELL*scale)/crop.height
-    crop=crop.resize((max(1,int(crop.width*sc)),max(1,int(crop.height*sc))),Image.NEAREST)
+    sc=min((CELL*scale)/crop.height, (CELL*0.88)/crop.width)   # 12% side margin so extended weapons never touch the edge
+    nw,nh = max(1,int(crop.width*sc)), max(1,int(crop.height*sc))
+    crop=crop.resize((nw,nh),Image.NEAREST)
     cell=Image.new('RGBA',(CELL,CELL),(0,0,0,0))
-    cell.paste(crop,(int(CELL/2-(fc-bb[0])*sc), int(CELL*0.95-crop.height)),crop)
+    # Anchor x on the feet so the character doesn't slide between frames, BUT
+    # an attack pose puts the weapon far from the feet: the feet-anchored x
+    # then exceeds the spare room and the clamp slams the art flush against
+    # the cell edge (looked like the blade was cut off). When the feet anchor
+    # doesn't fit, fall back to centring the artwork itself.
+    x_feet = int(CELL/2-(fc-bb[0])*sc)
+    spare = CELL-nw
+    x = x_feet if 0 <= x_feet <= spare else (spare//2)
+    y = max(0, min(int(CELL*0.95-nh), CELL-nh))
+    cell.paste(crop,(x,y),crop)
     return cell
-
-# ---------- MANUAL OVERRIDES (user-verified) ----------
-# Eye-position detection is reliable for WALK rows, but breaks on ATTACK rows:
-# the body twists and the weapon extends, so the "eye is on the facing side"
-# rule no longer holds. These rows were verified by eye in-game and corrected.
-#   key: (sheet_label, row_index) -> flip left/right after auto-detection
-MANUAL_FLIP = {
-    ('GOBLIN', 2),   # attack row inverted by auto-detect (confirmed in-game v0.37)
-    # ('ORC', 2) removed at v0.43: the charge row was re-drawn from scratch
-    # (1000049672.jpg) with the axe raised FORWARD, so the old compensation
-    # no longer applies. That row is now patched in separately, not auto-built.
-}
 
 def build(src, out, scale, label):
     im=Image.open(src); W,H=im.size; cw,ch=W/4,H/3
@@ -139,5 +156,5 @@ def build(src, out, scale, label):
     return sheet
 
 build('/mnt/user-data/uploads/1000049640.jpg','/home/claude/sprites/goblin_sheet.png',0.80,'GOBLIN')
-build('/mnt/user-data/uploads/1000049655.jpg','/home/claude/sprites/orc_sheet.png',0.92,'ORC')
+build('/mnt/user-data/uploads/1000049655.jpg','/home/claude/sprites/orc_sheet.png',0.84,'ORC')
 build('/mnt/user-data/uploads/1000049657.jpg','/home/claude/sprites/thrower_sheet.png',0.78,'THROWER')
