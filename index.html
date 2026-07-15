@@ -44,7 +44,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.55</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.56</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
 </div>
 <div id="hint">PC: WASD 이동 · J 공격(연타=콤보) · K 대시 · 대시중 J=대시공격</div>
@@ -359,16 +359,64 @@ const ITEMS = {
   w_gold:   { slot:'weapon', name:'황금 검',   atk:10, cost:420, desc:'공격 +10',
               blade:'#ffd36e', arc:[255,215,110], spark:'#ffe9a8' },
   // armour
-  a_cloth:  { slot:'armor',  name:'천 옷',     hp:0,  dr:0,    cost:0,   desc:'효과 없음' },
-  a_leather:{ slot:'armor',  name:'가죽 갑옷', hp:20, dr:0.10, cost:70,  desc:'최대 HP +20 · 피해 -10%' },
-  a_chain:  { slot:'armor',  name:'사슬 갑옷', hp:45, dr:0.20, cost:200, desc:'최대 HP +45 · 피해 -20%' },
-  a_plate:  { slot:'armor',  name:'판금 갑옷', hp:80, dr:0.30, cost:460, desc:'최대 HP +80 · 피해 -30%' },
+  // armour. `chest` recolours the tunic's torso only (not the trousers), and
+  // `hitFx` drives what happens when you get struck — armour's job is defence,
+  // so the clearest place to show it off is the moment you take a hit.
+  a_cloth:  { slot:'armor',  name:'천 옷',     hp:0,  dr:0,    cost:0,   desc:'효과 없음',
+              chest:null, hitFx:'cloth' },
+  a_leather:{ slot:'armor',  name:'가죽 갑옷', hp:20, dr:0.10, cost:70,  desc:'최대 HP +20 · 피해 -10%',
+              chest:'#8a5a32', hitFx:'leather' },
+  a_chain:  { slot:'armor',  name:'사슬 갑옷', hp:45, dr:0.20, cost:200, desc:'최대 HP +45 · 피해 -20%',
+              chest:'#8f96a3', hitFx:'chain' },
+  a_plate:  { slot:'armor',  name:'판금 갑옷', hp:80, dr:0.30, cost:460, desc:'최대 HP +80 · 피해 -30%',
+              chest:'#d8dde8', hitFx:'plate' },
 };
 // Fall back to the rusty blade's look when nothing is equipped.
 function weaponDef(){ return ITEMS[player.weapon] || ITEMS.w_rusty; }
+function armorDef(){ return ITEMS[player.armor] || ITEMS.a_cloth; }
 function arcRGB(){ return weaponDef().arc; }
 function sparkCol(){ return weaponDef().spark; }
 function bladeCol(){ return weaponDef().blade; }
+
+// Recolour the hero's tunic TORSO to show worn armour.
+// Measured: the blue spans y=46..103 in a 128px cell and pinches to 5px at
+// y=81 — that's the belt. Above it is the shirt, below are trousers. Only the
+// shirt becomes armour, so the character still reads as himself.
+const TORSO_Y0 = 44, TORSO_Y1 = 81;
+const armorCache = {};
+function recolorTorso(sheet, key, chest){
+  if(!chest) return sheet;
+  const ck = key+'_'+chest;
+  if(armorCache[ck]) return armorCache[ck];
+  const c = document.createElement('canvas');
+  c.width = sheet.naturalWidth || sheet.width;
+  c.height = sheet.naturalHeight || sheet.height;
+  const g = c.getContext('2d');
+  g.drawImage(sheet, 0, 0);
+  try{
+    const img = g.getImageData(0,0,c.width,c.height);
+    const d = img.data;
+    const tr=parseInt(chest.slice(1,3),16), tg=parseInt(chest.slice(3,5),16), tb=parseInt(chest.slice(5,7),16);
+    for(let y=0;y<c.height;y++){
+      const cy = y % 128;                       // row within this sprite cell
+      if(cy < TORSO_Y0 || cy > TORSO_Y1) continue;
+      for(let x=0;x<c.width;x++){
+        const i=(y*c.width+x)*4;
+        if(d[i+3]===0) continue;
+        const r=d[i], gg=d[i+1], b=d[i+2];
+        if(b>90 && b-r>30 && b-gg>20){          // tunic blue
+          const lum = b/255;
+          d[i]   = Math.min(255, tr*lum);
+          d[i+1] = Math.min(255, tg*lum);
+          d[i+2] = Math.min(255, tb*lum);
+        }
+      }
+    }
+    g.putImageData(img,0,0);
+  }catch(e){ return sheet; }
+  armorCache[ck] = c;
+  return c;
+}
 // What each shop stocks — later maps sell better gear.
 const SHOP_STOCK = {
   field: ['w_iron', 'a_leather'],
@@ -417,6 +465,30 @@ function sellItem(slot){
   player.gold += Math.floor(ITEMS[cur].cost*0.5);   // 50% back
   if(slot==='weapon') player.weapon=null; else player.armor=null;
   recalcStats(); saveGame();
+}
+
+// What it looks like when YOU get hit — driven by the armour you're wearing.
+// Armour's whole job is defence, so the moment of impact is where it should
+// be legible. Cloth = you just get hurt; plate = the blow skids off you.
+function spawnPlayerHitFx(){
+  const kind = armorDef().hitFx || 'cloth';
+  const n = { cloth:6, leather:8, chain:12, plate:14 }[kind];
+  const col = { cloth:'#e05a5a', leather:'#b07a4a', chain:'#c9d2e0', plate:'#ffffff' }[kind];
+  for(let i=0;i<n;i++){
+    const a = Math.random()*Math.PI*2;
+    const sp = kind==='cloth' ? 1.5+Math.random()*2 : 3+Math.random()*4;
+    effects.push({x:player.x, y:player.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp,
+                  t: kind==='cloth'?10:12, c:col, type:'spark'});
+  }
+  if(kind==='chain' || kind==='plate'){
+    // a ring of deflected light — the blow skidding off metal
+    effects.push({x:player.x, y:player.y, vx:0, vy:0, t:8,
+                  c: kind==='plate'?'#ffffff':'#c9d2e0',
+                  type:'flash', r: kind==='plate'?30:22});
+  }
+  // better armour = less stagger, which matches actually taking less damage
+  const shakeMul = { cloth:1.0, leather:0.85, chain:0.65, plate:0.45 }[kind];
+  shake = Math.max(shake, 8*shakeMul);
 }
 
 // ---- SAVE / LOAD ----
@@ -697,7 +769,9 @@ function drawSwing(cx, cy, h, dir, fi, tint){
   const sx = col*ATK_CELL, sy = Math.max(0,Math.min(2,fi))*ATK_CELL;
   const scale = h/ATK_CELL, w = ATK_CELL*scale;
   const dx = Math.round(cx - w/2), dy = Math.round(cy - h/2);
-  drawSheetTinted(bladeSheet(), sx, sy, ATK_CELL, ATK_CELL, dx, dy, w, h, tint);
+  // blade colour first, then armour on top of that result
+  const sheet = recolorTorso(bladeSheet(), 'atk_'+(player.weapon||'w_rusty'), armorDef().chest);
+  drawSheetTinted(sheet, sx, sy, ATK_CELL, ATK_CELL, dx, dy, w, h, tint);
 }
 
 const HERO_CELL = 128; // each cell in the 512x512 sheet
@@ -717,7 +791,7 @@ function drawHero(cx, cy, h, state, dir, tint, walkFrame){
   const scale = h/HERO_CELL;
   const w = HERO_CELL*scale;
   const dx = Math.round(cx - w/2), dy = Math.round(cy - h/2);
-  drawSheetTinted(HERO_SHEET, sx, sy, HERO_CELL, HERO_CELL, dx, dy, w, h, tint);
+  drawSheetTinted(recolorTorso(HERO_SHEET, 'hero', armorDef().chest), sx, sy, HERO_CELL, HERO_CELL, dx, dy, w, h, tint);
 }
 
 function defSprite(name, palette, rows){ SPR[name] = { pal:palette, rows }; }
@@ -1365,7 +1439,7 @@ function update(){
       // contact damage (all types)
       if(d < e.r+player.r+2 && player.iFr<=0 && e.atkCd<=0){
         player.hp -= Math.max(1, Math.round(e.touch*(1-damageReduction()))); player.hitFlash=10; player.iFr=20; e.atkCd=30;
-        shake=8; updateHUD();
+        spawnPlayerHitFx(); updateHUD();
         if(e.kind==='charger'&&e.state==='charge'){ e.state='rest'; e.stateT=25; }
         if(player.hp<=0) respawn();
       }
@@ -1436,7 +1510,7 @@ function update(){
     b.spin += b.spinV;                 // tumble through the air
     const dx=player.x-b.x, dy=player.y-b.y;
     if(Math.hypot(dx,dy) < b.r+player.r && player.iFr<=0){
-      player.hp-=Math.max(1, Math.round(8*(1-damageReduction()))); player.hitFlash=10; player.iFr=20; shake=8;
+      player.hp-=Math.max(1, Math.round(8*(1-damageReduction()))); player.hitFlash=10; player.iFr=20; spawnPlayerHitFx();
       updateHUD(); b.t=0;
       if(player.hp<=0) respawn();
     }
