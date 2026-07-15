@@ -44,7 +44,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.51</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.52</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
 </div>
 <div id="hint">PC: WASD 이동 · J 공격(연타=콤보) · K 대시 · 대시중 J=대시공격</div>
@@ -147,6 +147,13 @@ addEventListener('visibilitychange', ()=>{
   if(document.hidden){ BGM.pause(); BGM_BOSS.pause(); }
   else if(bgmOn) TRACKS[curTrack].play().catch(()=>{});
 });
+
+// ---- game state ----
+// 'title' | 'playing' | 'cleared'  — the loop still runs in every state so the
+// world keeps animating behind the menus.
+let gameState = 'title';
+let clearStats = null;
+let runStart = 0;
 
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 ctx.imageSmoothingEnabled = false;
@@ -334,6 +341,41 @@ function buildFloorPattern(){
   floorPattern = ctx.createPattern(c, 'repeat');
 }
 
+// ---- SAVE / LOAD ----
+// Autosaves on every map transition and level-up. A run is short, so we only
+// persist progression + which map you're on — not enemy positions, which would
+// let you save-scum mid-fight.
+const SAVE_KEY = 'ys_save_v1';
+function saveGame(){
+  try{
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      map: curMap,
+      lv: player.lv, xp: player.xp, xpNext: player.xpNext,
+      maxhp: player.maxhp, hp: player.hp,
+      atkBonus: player.atkBonus, spd: player.spd,
+      cleared: clearedMaps,
+      t: Date.now()
+    }));
+  }catch(e){}
+}
+function loadSave(){
+  try{
+    const raw = localStorage.getItem(SAVE_KEY);
+    if(!raw) return null;
+    const s = JSON.parse(raw);
+    if(!s || !MAPS[s.map]) return null;
+    return s;
+  }catch(e){ return null; }
+}
+function clearSave(){ try{ localStorage.removeItem(SAVE_KEY); }catch(e){} }
+function applySave(s){
+  player.lv=s.lv; player.xp=s.xp; player.xpNext=s.xpNext;
+  player.maxhp=s.maxhp; player.hp=s.maxhp;      // start the map at full health
+  player.atkBonus=s.atkBonus; player.spd=s.spd;
+  clearedMaps = s.cleared || [];
+}
+let clearedMaps = [];
+
 let curMap = 'field';
 const WORLD = { w:MAPS.field.w, h:MAPS.field.h };
 const cam = { x:0, y:0 };
@@ -484,6 +526,7 @@ function gainXP(n, x, y){
     if(player.lv % 2 === 0) player.atkBonus += 1;
     player.spd = Math.min(6.2, player.spd + 0.06);
     levelFlash = 60;
+    saveGame();
     popups.push({x:player.x, y:player.y-70, val:player.lv, t:75, vy:-0.5, levelup:true});
     shake = Math.max(shake, 6);
   }
@@ -733,6 +776,7 @@ function loadMap(name, entryX, entryY){
   populateWorld();
   updateCamera();
   updateHUD();
+  saveGame();          // autosave at every map transition
 }
 function gateRect(){ return MAPS[curMap].gate; }
 buildWalls();
@@ -989,6 +1033,7 @@ function update(){
   const g = gateRect();
   if(g && !gateOpen && enemies.length===0){
     gateOpen = true;
+    if(!clearedMaps.includes(curMap)){ clearedMaps.push(curMap); saveGame(); }
     mapBannerText = '길이 열렸다 — ' + g.label;
     mapBanner = 150;
     // start fetching the boss track now so the reveal isn't silent while it buffers
@@ -1006,8 +1051,10 @@ function update(){
   if(MAPS[curMap].boss && enemies.length===0 && !bossCleared && !MAPS[curMap].gate){
     bossCleared = true;
     mapBannerText = '황금 기사 처치!';
-    mapBanner = 180;
-    setTimeout(()=>{ bossCleared=false; loadMap('field', 140, MAPS.field.h/2); }, 2000);
+    mapBanner = 120;
+    clearStats = { lv: player.lv, time: Math.floor((Date.now()-runStart)/1000), deaths: runDeaths };
+    clearSave();                       // run complete — no half-finished save
+    setTimeout(()=>{ gameState='cleared'; setUIVisible(false); }, 1800);
   }
   for(const e of enemies){
     // knockback overrides AI
@@ -1302,7 +1349,9 @@ function update(){
   for(const p of popups){ p.t--; p.y+=p.vy; p.vy*=0.94; }
 }
 
+let runDeaths = 0;
 function respawn(){
+  runDeaths++;
   // Death costs progress but doesn't wipe it — there are no checkpoints yet,
   // so a full reset would just punish a long run. Lose the current level's XP.
   player.xp = 0;
@@ -1767,7 +1816,108 @@ function draw(){
 
 // ---- loop ----
 updateCamera();
-function loop(){ update(); draw(); requestAnimationFrame(loop); }
+function loop(){
+  if(gameState==='playing') update();
+  draw();
+  if(gameState==='title') drawTitle();
+  else if(gameState==='cleared') drawClear();
+  requestAnimationFrame(loop);
+}
+
+// ---- title / clear screens ----
+function drawTitle(){
+  ctx.fillStyle='rgba(8,10,16,.82)'; ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+  ctx.fillStyle='#ffd36e'; ctx.font='bold 54px system-ui';
+  ctx.fillText('YS', W/2, H/2-70);
+  ctx.fillStyle='#8fa3c0'; ctx.font='15px system-ui';
+  ctx.fillText('검을 들고 황금 기사에게 이르라', W/2, H/2-36);
+
+  const sv = loadSave();
+  const bw=250, bh=46, bx=(W-bw)/2;
+  // continue (only if a save exists)
+  if(sv){
+    const by=H/2+4;
+    ctx.fillStyle='#2b3a52'; ctx.fillRect(bx,by,bw,bh);
+    ctx.strokeStyle='#6ec1ff'; ctx.lineWidth=2; ctx.strokeRect(bx,by,bw,bh);
+    ctx.fillStyle='#cfe6ff'; ctx.font='bold 17px system-ui';
+    ctx.fillText('이어하기', W/2, by+22);
+    ctx.fillStyle='#7f93ad'; ctx.font='11px system-ui';
+    ctx.fillText(`${MAPS[sv.map].name} · Lv ${sv.lv}`, W/2, by+38);
+    titleBtns.cont = {x:bx,y:by,w:bw,h:bh};
+  } else titleBtns.cont = null;
+
+  const ny = sv ? H/2+62 : H/2+10;
+  ctx.fillStyle='#3a3222'; ctx.fillRect(bx,ny,bw,bh);
+  ctx.strokeStyle='#ffd36e'; ctx.lineWidth=2; ctx.strokeRect(bx,ny,bw,bh);
+  ctx.fillStyle='#ffd36e'; ctx.font='bold 17px system-ui';
+  ctx.fillText(sv ? '새로 시작' : '시작', W/2, ny+29);
+  titleBtns.newg = {x:bx,y:ny,w:bw,h:bh};
+
+  ctx.fillStyle='#54637a'; ctx.font='11px system-ui';
+  ctx.fillText('PC: WASD 이동 · J 공격 · K 대시', W/2, H-24);
+  ctx.textAlign='left';
+}
+
+function drawClear(){
+  ctx.fillStyle='rgba(8,10,16,.86)'; ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+  ctx.fillStyle='#ffd36e'; ctx.font='bold 46px system-ui';
+  ctx.fillText('CLEAR!', W/2, H/2-72);
+  ctx.fillStyle='#cfe6ff'; ctx.font='16px system-ui';
+  ctx.fillText('황금 기사를 쓰러뜨렸다', W/2, H/2-42);
+  if(clearStats){
+    const mm=String(Math.floor(clearStats.time/60)).padStart(2,'0');
+    const ss=String(clearStats.time%60).padStart(2,'0');
+    ctx.fillStyle='#8fa3c0'; ctx.font='14px system-ui';
+    ctx.fillText(`레벨 ${clearStats.lv}  ·  시간 ${mm}:${ss}  ·  사망 ${clearStats.deaths}회`, W/2, H/2-8);
+  }
+  const bw=250, bh=46, bx=(W-bw)/2, by=H/2+28;
+  ctx.fillStyle='#3a3222'; ctx.fillRect(bx,by,bw,bh);
+  ctx.strokeStyle='#ffd36e'; ctx.lineWidth=2; ctx.strokeRect(bx,by,bw,bh);
+  ctx.fillStyle='#ffd36e'; ctx.font='bold 17px system-ui';
+  ctx.fillText('다시 하기', W/2, by+29);
+  titleBtns.newg = {x:bx,y:by,w:bw,h:bh};
+  titleBtns.cont = null;
+  ctx.textAlign='left';
+}
+
+const titleBtns = { cont:null, newg:null };
+function setUIVisible(v){
+  const d = v ? '' : 'none';
+  for(const id of ['hud','stick','btns','hint']){
+    const el=document.getElementById(id);
+    if(el) el.style.display = d;
+  }
+}
+setUIVisible(false);            // title screen: no HUD or thumbstick
+function startNewGame(){
+  setUIVisible(true);
+  clearSave();
+  player.lv=1; player.xp=0; player.xpNext=8;
+  player.maxhp=100; player.hp=100; player.atkBonus=0; player.spd=5.0;
+  clearedMaps=[]; runDeaths=0; runStart=Date.now(); bossCleared=false;
+  gameState='playing';
+  loadMap('field', 140, MAPS.field.h/2);
+}
+function continueGame(){
+  setUIVisible(true);
+  const s=loadSave();
+  if(!s){ startNewGame(); return; }
+  applySave(s);
+  runDeaths=0; runStart=Date.now(); bossCleared=false;
+  gameState='playing';
+  loadMap(s.map, 140, MAPS[s.map].h/2);
+}
+// menu clicks — screen space, so read the raw canvas coords
+cv.addEventListener('pointerdown', e=>{
+  if(gameState==='playing') return;
+  const r=cv.getBoundingClientRect();
+  const x=(e.clientX-r.left)*(W/r.width), y=(e.clientY-r.top)*(H/r.height);
+  const hit=(b)=> b && x>=b.x && x<=b.x+b.w && y>=b.y && y<=b.y+b.h;
+  if(hit(titleBtns.cont)) continueGame();
+  else if(hit(titleBtns.newg)) startNewGame();
+});
 loop();
 </script>
 </body>
