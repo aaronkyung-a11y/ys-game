@@ -44,7 +44,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.39</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.40</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
 </div>
 <div id="hint">PC: WASD 이동 · J 공격(연타=콤보) · K 대시 · 대시중 J=대시공격</div>
@@ -179,7 +179,59 @@ const player = {
 let enemies = [], effects = [], bullets = [], orbs = [], popups = [], kills = 0, hitStop = 0, shake = 0;
 
 // ---- world & camera ----
-const WORLD = { w:2400, h:1800 };
+// ---- MAPS ----
+// Each map defines its own size, walls, spawn plan, and where its exit gate
+// leads. Clearing a map's enemies opens the gate to the next one.
+const MAPS = {
+  field: {
+    name: '들판',
+    w: 2400, h: 1800,
+    plan: { grunt:12, charger:5, shooter:4 },
+    gate: { x:2280, y:840, w:96, h:120, to:'ruins', label:'유적으로' },
+    walls: [
+      {x:360, y:300, w:260, h:40}, {x:360, y:300, w:40, h:240},
+      {x:1000, y:200, w:40, h:360},
+      {x:1500, y:500, w:340, h:40},
+      {x:700, y:820, w:40, h:420},
+      {x:1150, y:1000, w:300, h:40}, {x:1410, y:1000, w:40, h:260},
+      {x:1900, y:1150, w:40, h:420},
+      {x:400, y:1300, w:360, h:40},
+      {x:1000, y:1450, w:260, h:40},
+      {x:560, y:640, w:70, h:70}, {x:1720, y:820, w:70, h:70},
+      {x:980, y:640, w:70, h:70}, {x:1300, y:1250, w:70, h:70},
+    ]
+  },
+  ruins: {
+    name: '무너진 유적',
+    w: 2000, h: 1600,
+    plan: { grunt:8, charger:7, shooter:7 },   // harder mix
+    gate: { x:1880, y:740, w:96, h:120, to:'lair', label:'둥지로' },
+    walls: [
+      {x:300, y:260, w:40, h:420}, {x:300, y:260, w:420, h:40},
+      {x:1300, y:260, w:40, h:420}, {x:940, y:260, w:400, h:40},
+      {x:640, y:700, w:40, h:300},
+      {x:1000, y:820, w:360, h:40},
+      {x:300, y:1150, w:500, h:40},
+      {x:1200, y:1150, w:40, h:340},
+      {x:1550, y:400, w:70, h:70}, {x:1550, y:1100, w:70, h:70},
+      {x:850, y:480, w:70, h:70}, {x:850, y:1250, w:70, h:70},
+    ]
+  },
+  lair: {
+    name: '오크 군주의 둥지',
+    w: 1600, h: 1300,
+    plan: {},                 // no trash — the boss is the encounter
+    boss: true,
+    gate: null,               // beating the boss loops back to the field
+    walls: [
+      // open arena: only corner pillars, nowhere to hide for long
+      {x:260, y:240, w:80, h:80}, {x:1260, y:240, w:80, h:80},
+      {x:260, y:980, w:80, h:80}, {x:1260, y:980, w:80, h:80},
+    ]
+  }
+};
+let curMap = 'field';
+const WORLD = { w:MAPS.field.w, h:MAPS.field.h };
 const cam = { x:0, y:0 };
 function updateCamera(){
   cam.x = player.x - W/2;
@@ -188,24 +240,16 @@ function updateCamera(){
   cam.y = Math.max(0, Math.min(WORLD.h - H, cam.y));
 }
 
-// walls / obstacles (axis-aligned rects in world space)
-const walls = [
-  // border thickness so the field feels enclosed
-  {x:0, y:0, w:WORLD.w, h:24}, {x:0, y:WORLD.h-24, w:WORLD.w, h:24},
-  {x:0, y:0, w:24, h:WORLD.h}, {x:WORLD.w-24, y:0, w:24, h:WORLD.h},
-  // interior structures — rooms & pillars
-  {x:360, y:300, w:260, h:40}, {x:360, y:300, w:40, h:240},
-  {x:1000, y:200, w:40, h:360},
-  {x:1500, y:500, w:340, h:40},
-  {x:700, y:820, w:40, h:420},
-  {x:1150, y:1000, w:300, h:40}, {x:1410, y:1000, w:40, h:260},
-  {x:1900, y:1150, w:40, h:420},
-  {x:400, y:1300, w:360, h:40},
-  {x:1000, y:1450, w:260, h:40},
-  // pillars
-  {x:560, y:640, w:70, h:70}, {x:1720, y:820, w:70, h:70},
-  {x:980, y:640, w:70, h:70}, {x:1300, y:1250, w:70, h:70},
-];
+// walls / obstacles (axis-aligned rects in world space) — rebuilt per map
+let walls = [];
+function buildWalls(){
+  const m = MAPS[curMap];
+  walls = [
+    {x:0, y:0, w:m.w, h:24}, {x:0, y:m.h-24, w:m.w, h:24},
+    {x:0, y:0, w:24, h:m.h}, {x:m.w-24, y:0, w:24, h:m.h},
+    ...m.walls.map(w=>({...w}))
+  ];
+}
 // resolve a circle (cx,cy,cr) against all walls, return corrected {x,y}
 function collideWalls(cx, cy, cr){
   for(const w of walls){
@@ -496,13 +540,14 @@ const ETYPE = {
   grunt:   { r:22, spd:2.0, hp:3, color:'#e05a5a', touch:6,  xp:3 },   // basic chaser
   charger: { r:26, spd:1.1, hp:4, color:'#e0913a', touch:10, xp:6 },   // slow, then lunges
   shooter: { r:22, spd:1.0, hp:2, color:'#9a5ae0', touch:5,  xp:5 },   // keeps distance, fires
+  boss:    { r:52, spd:1.3, hp:60, color:'#c94f4f', touch:16, xp:60 }, // orc lord
 };
 // how hard enemies push each other apart so a group doesn't collapse into one blob
 const SEPARATION = 0.55;
 function makeEnemy(kind, x, y){
   const t = ETYPE[kind];
   return {
-    kind, x, y, r:t.r, spd:t.spd, hp:t.hp, color:t.color, touch:t.touch, xp:t.xp,
+    kind, x, y, r:t.r, spd:t.spd, hp:t.hp, maxhp:t.hp, color:t.color, touch:t.touch, xp:t.xp,
     knx:0, kny:0, hitFlash:0, atkCd:0,
     state: kind==='shooter'?'cool':'approach', stateT: kind==='shooter'?60:0,
     chgVx:0, chgVy:0, aimX:0, aimY:0,
@@ -527,15 +572,37 @@ function randomOpenPos(minFromPlayer){
 }
 function populateWorld(){
   enemies = [];
-  const plan = [];
-  for(let i=0;i<14;i++) plan.push('grunt');
-  for(let i=0;i<7;i++)  plan.push('charger');
-  for(let i=0;i<5;i++)  plan.push('shooter');
-  for(const kind of plan){
-    const p = randomOpenPos(360); // don't spawn on top of the player
-    enemies.push(makeEnemy(kind, p.x, p.y));
+  const m = MAPS[curMap];
+  if(m.boss){
+    enemies.push(makeEnemy('boss', m.w/2, 220));
+    return;
+  }
+  for(const [kind,n] of Object.entries(m.plan||{})){
+    for(let i=0;i<n;i++){
+      const p = randomOpenPos(360); // don't spawn on top of the player
+      enemies.push(makeEnemy(kind, p.x, p.y));
+    }
   }
 }
+
+// ---- map transitions ----
+let gateOpen = false, mapBanner = 0, mapBannerText = '', bossCleared = false;
+function loadMap(name, entryX, entryY){
+  curMap = name;
+  const m = MAPS[name];
+  WORLD.w = m.w; WORLD.h = m.h;
+  buildWalls();
+  player.x = entryX ?? 120; player.y = entryY ?? m.h/2;
+  player.vx = 0; player.vy = 0;
+  bullets=[]; orbs=[]; popups=[]; effects=[];
+  gateOpen = false;
+  mapBannerText = m.name; mapBanner = 150;
+  populateWorld();
+  updateCamera();
+  updateHUD();
+}
+function gateRect(){ return MAPS[curMap].gate; }
+buildWalls();
 populateWorld();
 
 // ---- combat ----
@@ -769,6 +836,27 @@ function update(){
   // ---- enemies ----
   enemies = enemies.filter(e=>e.hp>0);
   HUD.left.textContent = enemies.length;
+
+  // ---- gate: opens when the map is cleared, walk into it to advance ----
+  const g = gateRect();
+  if(g && !gateOpen && enemies.length===0){
+    gateOpen = true;
+    mapBannerText = '길이 열렸다 — ' + g.label;
+    mapBanner = 150;
+  }
+  if(g && gateOpen &&
+     player.x > g.x-player.r && player.x < g.x+g.w+player.r &&
+     player.y > g.y-player.r && player.y < g.y+g.h+player.r){
+    loadMap(g.to, 140, MAPS[g.to].h/2);
+    return;
+  }
+  // boss map cleared -> loop back to the field
+  if(MAPS[curMap].boss && enemies.length===0 && !bossCleared){
+    bossCleared = true;
+    mapBannerText = '오크 군주 처치!';
+    mapBanner = 180;
+    setTimeout(()=>{ bossCleared=false; loadMap('field', 140, MAPS.field.h/2); }, 2000);
+  }
   for(const e of enemies){
     // knockback overrides AI
     if(Math.abs(e.knx)>0.1||Math.abs(e.kny)>0.1){
@@ -807,6 +895,51 @@ function update(){
           if(e.stateT<=0 && d<380){ e.state='aim'; e.stateT=40; e.aimX=player.x; e.aimY=player.y; }
         } else {
           e.state='cool'; e.stateT=60;
+        }
+      } else if(e.kind==='boss'){
+        // Orc Lord: cycles the patterns the player already knows how to read
+        // (charge / slam / summon), but faster and angrier as he loses HP.
+        const rage = e.hp <= e.maxhp*0.4;      // phase 2
+        e.stateT--;
+        if(e.state==='charge'){
+          e.x+=e.chgVx; e.y+=e.chgVy;
+          if(e.stateT<=0 || pointInWall(e.x+e.chgVx*3, e.y+e.chgVy*3)){
+            e.state='rest'; e.stateT = rage?20:34;
+            shake=Math.max(shake,10);
+          }
+        } else if(e.state==='windup'){
+          if(e.stateT<=0){
+            const sp = rage?9.5:7.5;
+            e.chgVx=dx/d*sp; e.chgVy=dy/d*sp;
+            e.state='charge'; e.stateT=26;
+          }
+        } else if(e.state==='slam'){
+          if(e.stateT<=0){
+            // radial shockwave of rocks — forces movement, punishes hugging
+            const n = rage?12:8;
+            for(let i=0;i<n;i++){
+              const a=(i/n)*Math.PI*2 + Math.random()*0.2;
+              bullets.push(makeRock(e.x, e.y, Math.cos(a)*3.0, Math.sin(a)*3.0));
+            }
+            shake=14; e.state='rest'; e.stateT = rage?26:44;
+          }
+        } else if(e.state==='summon'){
+          if(e.stateT<=0){
+            for(let i=0;i<(rage?3:2);i++){
+              const a=Math.random()*Math.PI*2, r=140;
+              enemies.push(makeEnemy('grunt', e.x+Math.cos(a)*r, e.y+Math.sin(a)*r));
+            }
+            e.state='rest'; e.stateT = rage?30:50;
+          }
+        } else { // rest / approach — lumber toward the player, then pick a move
+          if(d>90) { e.x+=dx/d*e.spd; e.y+=dy/d*e.spd; }
+          if(e.stateT<=0){
+            const roll=Math.random();
+            const adds = enemies.filter(x=>x.kind!=='boss').length;
+            if(d>320 || roll<0.42){ e.state='windup'; e.stateT = rage?22:34; }
+            else if(roll<0.78 || adds>=6){ e.state='slam'; e.stateT = rage?26:38; }
+            else { e.state='summon'; e.stateT=40; }
+          }
         }
       } else { // grunt — circle warily, then commit to a real rush
         e.wobble += 0.08;
@@ -861,9 +994,10 @@ function update(){
       if(d<min && d>0.001){
         const push=(min-d)/2*SEPARATION;
         const ux=dx/d, uy=dy/d;
-        // chargers mid-lunge plough through instead of being shoved aside
-        const aFixed = (a.kind==='charger'&&a.state==='charge');
-        const bFixed = (b2.kind==='charger'&&b2.state==='charge');
+        // chargers mid-lunge plough through instead of being shoved aside;
+        // the boss is immovable — adds should part around him, not push him
+        const aFixed = (a.kind==='boss') || (a.kind==='charger'&&a.state==='charge');
+        const bFixed = (b2.kind==='boss') || (b2.kind==='charger'&&b2.state==='charge');
         if(!aFixed){ a.x-=ux*push; a.y-=uy*push; }
         if(!bFixed){ b2.x+=ux*push; b2.y+=uy*push; }
       }
@@ -953,10 +1087,12 @@ function respawn(){
     player.atkBonus = Math.floor(player.lv/2);
     player.spd = Math.min(6.2, 5.0 + (player.lv-1)*0.06);
   }
-  player.hp=player.maxhp; player.x=WORLD.w/2; player.y=WORLD.h/2;
+  player.hp=player.maxhp;
   bullets=[]; orbs=[]; popups=[];
   updateHUD();
-  populateWorld(); updateCamera();
+  // restart the current map rather than dropping the player into a half-cleared
+  // one (and never leave them standing next to a freshly respawned boss)
+  loadMap(curMap, 140, MAPS[curMap].h/2);
 }
 
 function spawnHitFx(x,y,ang){
@@ -987,6 +1123,31 @@ function draw(){
   for(let gy=gy0; gy<=cam.y+H; gy+=45){ctx.beginPath();ctx.moveTo(cam.x,gy);ctx.lineTo(cam.x+W,gy);ctx.stroke();}
 
   // walls
+  // ---- exit gate ----
+  const gr = gateRect();
+  if(gr){
+    if(gateOpen){
+      const pulse = 0.55 + 0.45*Math.abs(Math.sin(Date.now()*0.004));
+      ctx.fillStyle = `rgba(110,193,255,${0.18*pulse})`;
+      ctx.fillRect(gr.x, gr.y, gr.w, gr.h);
+      ctx.strokeStyle = `rgba(160,220,255,${pulse})`; ctx.lineWidth=3;
+      ctx.strokeRect(gr.x, gr.y, gr.w, gr.h);
+      ctx.fillStyle = `rgba(200,235,255,${pulse})`;
+      ctx.font='bold 13px system-ui'; ctx.textAlign='center';
+      ctx.fillText(gr.label, gr.x+gr.w/2, gr.y-10);
+      ctx.textAlign='left';
+    } else {
+      ctx.fillStyle='#232a38'; ctx.fillRect(gr.x, gr.y, gr.w, gr.h);
+      ctx.strokeStyle='#3a4558'; ctx.lineWidth=3;
+      ctx.strokeRect(gr.x, gr.y, gr.w, gr.h);
+      // barred: still sealed
+      ctx.strokeStyle='#4a5568'; ctx.lineWidth=4;
+      for(let i=1;i<4;i++){
+        ctx.beginPath(); ctx.moveTo(gr.x+2, gr.y+gr.h*i/4); ctx.lineTo(gr.x+gr.w-2, gr.y+gr.h*i/4); ctx.stroke();
+      }
+    }
+  }
+
   for(const w of walls){
     // cull offscreen
     if(w.x+w.w<cam.x||w.x>cam.x+W||w.y+w.h<cam.y||w.y>cam.y+H) continue;
@@ -1070,7 +1231,12 @@ function draw(){
     if(e.hitFlash>0) tint='#ffffff';
     else if(e.kind==='charger' && e.state==='charge') tint='#ffb84d';
 
-    if(e.kind==='grunt' && gobSheetReady){
+    if(e.kind==='boss' && orcSheetReady){
+      const bracing = (e.state==='charge' || e.state==='windup' || e.state==='slam');
+      const row = bracing ? 2 : (Math.floor(e.walkT/10)%2);
+      const rage = e.hp <= e.maxhp*0.4;
+      drawOrc(e.x, e.y, 250, e.face, row, tint || (rage?'#ff6a4d':null));
+    } else if(e.kind==='grunt' && gobSheetReady){
       // row: 2 = attack (mid-rush / just hit), else alternate walk frames 0/1
       const attacking = (e.state==='rush') || (e.atkCd>20);
       const row = attacking ? 2 : (Math.floor(e.walkT/6)%2);
@@ -1238,8 +1404,14 @@ function draw(){
     ctx.fillStyle='rgba(42,52,70,.9)';
     for(const w of walls) ctx.fillRect(mx+w.x*sc, my+w.y*sc, Math.max(1,w.w*sc), Math.max(1,w.h*sc));
     for(const e of enemies){
-      ctx.fillStyle = e.kind==='charger'?'#e0913a':e.kind==='shooter'?'#9a5ae0':'#e05a5a';
-      ctx.fillRect(mx+e.x*sc-1, my+e.y*sc-1, 2.5, 2.5);
+      ctx.fillStyle = e.kind==='boss'?'#ff5a5a':e.kind==='charger'?'#e0913a':e.kind==='shooter'?'#9a5ae0':'#e05a5a';
+      const s = e.kind==='boss' ? 5 : 2.5;
+      ctx.fillRect(mx+e.x*sc-1, my+e.y*sc-1, s, s);
+    }
+    const gm = gateRect();
+    if(gm && gateOpen){
+      ctx.fillStyle='#6ec1ff';
+      ctx.fillRect(mx+gm.x*sc, my+gm.y*sc, Math.max(2,gm.w*sc), Math.max(2,gm.h*sc));
     }
     ctx.fillStyle='#7ec7ff';
     ctx.fillRect(mx+player.x*sc-2, my+player.y*sc-2, 4, 4);
@@ -1248,15 +1420,33 @@ function draw(){
     ctx.strokeRect(mx+cam.x*sc, my+cam.y*sc, W*sc, H*sc);
   }
 
-  // ---- cleared banner ----
-  if(enemies.length===0){
-    ctx.fillStyle='rgba(0,0,0,.45)'; ctx.fillRect(0,0,W,H);
-    ctx.textAlign='center';
-    ctx.fillStyle='#ffd36e'; ctx.font='bold 44px system-ui';
-    ctx.fillText('필드 클리어!', W/2, H/2-6);
-    ctx.fillStyle='#cfe'; ctx.font='16px system-ui';
-    ctx.fillText('모든 적을 처치했습니다', W/2, H/2+28);
+  // ---- boss health bar (screen space) ----
+  const boss = enemies.find(e=>e.kind==='boss');
+  if(boss){
+    const bw=Math.min(520, W-80), bx=(W-bw)/2, by=H-44;
+    ctx.fillStyle='rgba(10,14,20,.75)'; ctx.fillRect(bx-3, by-3, bw+6, 20);
+    ctx.fillStyle='#3a1f22'; ctx.fillRect(bx, by, bw, 14);
+    const frac=Math.max(0,boss.hp/boss.maxhp);
+    ctx.fillStyle = frac<=0.4 ? '#ff6a4d' : '#c94f4f';
+    ctx.fillRect(bx, by, bw*frac, 14);
+    ctx.strokeStyle='rgba(255,255,255,.25)'; ctx.lineWidth=1;
+    ctx.strokeRect(bx, by, bw, 14);
+    ctx.textAlign='center'; ctx.fillStyle='#ffd9c8'; ctx.font='bold 12px system-ui';
+    ctx.fillText('오크 군주' + (frac<=0.4?'  — 격노!':''), W/2, by-8);
     ctx.textAlign='left';
+  }
+
+  // ---- map banner (transient; does NOT block play) ----
+  if(mapBanner>0){
+    const a = Math.min(1, mapBanner/40);
+    ctx.globalAlpha = a;
+    ctx.textAlign='center';
+    ctx.fillStyle='rgba(0,0,0,.5)'; ctx.fillRect(0, H/2-46, W, 76);
+    ctx.fillStyle='#ffd36e'; ctx.font='bold 34px system-ui';
+    ctx.fillText(mapBannerText, W/2, H/2);
+    ctx.textAlign='left';
+    ctx.globalAlpha = 1;
+    mapBanner--;
   }
 }
 
