@@ -40,7 +40,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.32</span></div>
+<div id="hud">HP <b id="hp">100</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.33</span></div>
 <div id="hint">PC: WASD 이동 · J 공격(연타=콤보) · K 대시 · 대시중 J=대시공격</div>
 
 <audio id="bgm" loop preload="auto" src="bgm.mp3"></audio>
@@ -836,9 +836,19 @@ function update(){
       // committed: face the locked charge vector, don't swivel toward the player
       e.face = dir4(e.chgVx, e.chgVy);
       e.walkT += moved*0.4;
-    } else if(e.kind==='shooter' && e.state==='aim'){
-      // face where the rock is actually going, not where he's shuffling
-      e.face = dir4(e.aimX-e.x, e.aimY-e.y);
+    } else if(e.kind==='shooter' && (e.state==='aim' || Math.hypot(player.x-e.x, player.y-e.y) < 300)){
+      // aiming: face the locked aim point. repositioning nearby: keep eyes on
+      // the player rather than on the direction he's backpedalling.
+      const tx = (e.state==='aim') ? e.aimX : player.x;
+      const ty = (e.state==='aim') ? e.aimY : player.y;
+      e.face = dir4(tx-e.x, ty-e.y);
+      e.walkT += moved*0.55;
+    } else if(e.kind==='grunt' && Math.hypot(player.x-e.x, player.y-e.y) < 340){
+      // Melee enemies look at their TARGET, not their footpath. While orbiting,
+      // a grunt strafes sideways/backwards — following movement made it appear
+      // to walk at the player sideways or facing away. Engaged = eyes on player.
+      e.face = dir4(player.x-e.x, player.y-e.y);
+      e.walkT += moved*0.55;
     } else if(moved > 0.35){
       e.face = dir4(mvx, mvy);
       e.walkT += moved*0.55;              // animate proportional to distance moved
