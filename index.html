@@ -52,7 +52,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.58</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.59</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
   <div id="ragewrap"><div id="ragebar"></div></div>
 </div>
@@ -113,6 +113,7 @@ function paintSound(){
 paintSound();
 
 function startBGM(){
+  audioCtx();                 // unlock SFX on the same gesture
   if(!bgmOn) return;
   TRACKS[curTrack].play().catch(()=>{});   // still blocked? next gesture retries
 }
@@ -471,7 +472,7 @@ function buyItem(id){
   if(owns(id) || !canAfford(id)) return;
   player.gold -= it.cost;
   if(it.slot==='weapon') player.weapon = id; else player.armor = id;
-  recalcStats(); saveGame();
+  recalcStats(); saveGame(); SFX.buy();
   popups.push({x:player.x, y:player.y-70, val:it.name, t:60, vy:-0.6, buy:true});
 }
 function sellItem(slot){
@@ -486,6 +487,7 @@ function sellItem(slot){
 // Armour's whole job is defence, so the moment of impact is where it should
 // be legible. Cloth = you just get hurt; plate = the blow skids off you.
 function spawnPlayerHitFx(){
+  SFX.hurt();
   const kind = armorDef().hitFx || 'cloth';
   const n = { cloth:6, leather:8, chain:12, plate:14 }[kind];
   const col = { cloth:'#e05a5a', leather:'#b07a4a', chain:'#c9d2e0', plate:'#ffffff' }[kind];
@@ -505,6 +507,78 @@ function spawnPlayerHitFx(){
   const shakeMul = { cloth:1.0, leather:0.85, chain:0.65, plate:0.45 }[kind];
   shake = Math.max(shake, 8*shakeMul);
 }
+
+// ---- SFX ----
+// Synthesised with Web Audio rather than shipped as files: these are short
+// percussive sounds, so generating them costs nothing to download and lets each
+// hit vary slightly instead of retriggering one identical sample.
+let actx = null;
+function audioCtx(){
+  if(!actx){
+    try{ actx = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return null; }
+  }
+  if(actx.state === 'suspended') actx.resume().catch(()=>{});
+  return actx;
+}
+const SFX_VOL = 0.35;
+function sfxOn(){ return bgmOn; }        // the ♪ toggle mutes everything
+
+// noise burst — impacts, sword swishes
+function noise(dur, filterHz, vol, type='lowpass', sweepTo=null){
+  const a = audioCtx(); if(!a || !sfxOn()) return;
+  const n = Math.floor(a.sampleRate*dur);
+  const buf = a.createBuffer(1, n, a.sampleRate);
+  const d = buf.getChannelData(0);
+  for(let i=0;i<n;i++) d[i] = (Math.random()*2-1) * (1 - i/n);   // decaying noise
+  const src = a.createBufferSource(); src.buffer = buf;
+  const flt = a.createBiquadFilter(); flt.type = type;
+  flt.frequency.setValueAtTime(filterHz, a.currentTime);
+  if(sweepTo) flt.frequency.exponentialRampToValueAtTime(sweepTo, a.currentTime+dur);
+  const g = a.createGain();
+  g.gain.setValueAtTime(vol*SFX_VOL, a.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime+dur);
+  src.connect(flt); flt.connect(g); g.connect(a.destination);
+  src.start(); src.stop(a.currentTime+dur);
+}
+// pitched tone — rings, chimes, alerts
+function tone(freq, dur, vol, type='square', sweepTo=null){
+  const a = audioCtx(); if(!a || !sfxOn()) return;
+  const o = a.createOscillator(); o.type = type;
+  o.frequency.setValueAtTime(freq, a.currentTime);
+  if(sweepTo) o.frequency.exponentialRampToValueAtTime(sweepTo, a.currentTime+dur);
+  const g = a.createGain();
+  g.gain.setValueAtTime(vol*SFX_VOL, a.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime+dur);
+  o.connect(g); g.connect(a.destination);
+  o.start(); o.stop(a.currentTime+dur);
+}
+
+const SFX = {
+  swing(){ noise(0.11, 2600, 0.22, 'bandpass', 900); },      // blade cutting air
+  hit(big){                                                   // sword meets flesh
+    noise(big?0.16:0.10, big?600:900, big?0.55:0.38, 'lowpass');
+    tone(big?150:210, big?0.10:0.06, big?0.28:0.18, 'square', big?70:120);
+  },
+  parry(){                                                    // metal ringing — the key sound
+    tone(1250, 0.16, 0.40, 'square', 2100);
+    tone(1850, 0.22, 0.26, 'triangle', 2600);
+    noise(0.09, 4200, 0.30, 'highpass');
+  },
+  hurt(){ tone(190, 0.16, 0.30, 'sawtooth', 90); noise(0.10, 700, 0.25); },
+  dash(){ noise(0.13, 1500, 0.16, 'bandpass', 500); },
+  kill(){ noise(0.20, 500, 0.42, 'lowpass'); tone(110, 0.16, 0.26, 'square', 55); },
+  special(){                                                  // big, layered
+    tone(340, 0.5, 0.42, 'sawtooth', 90);
+    tone(680, 0.4, 0.24, 'square', 160);
+    noise(0.5, 2400, 0.42, 'lowpass', 250);
+  },
+  levelup(){ [523,659,784,1047].forEach((f,i)=> setTimeout(()=>tone(f,0.16,0.24,'triangle'), i*70)); },
+  coin(){ tone(1050, 0.05, 0.16, 'square'); setTimeout(()=>tone(1500,0.07,0.14,'square'), 45); },
+  buy(){ [523,784,1047].forEach((f,i)=> setTimeout(()=>tone(f,0.13,0.22,'triangle'), i*60)); },
+  gate(){ tone(300, 0.5, 0.24, 'sine', 720); },
+  heal(){ tone(700, 0.1, 0.20, 'sine', 1100); },
+  rock(){ noise(0.08, 1100, 0.16, 'bandpass'); },
+};
 
 // ---- SAVE / LOAD ----
 // Autosaves on every map transition and level-up. A run is short, so we only
@@ -694,6 +768,7 @@ function gainXP(n, x, y){
     if(player.lv % 2 === 0) player.atkBonus += 1;
     player.spd = Math.min(6.2, player.spd + 0.06);
     levelFlash = 60;
+    SFX.levelup();
     saveGame();
     popups.push({x:player.x, y:player.y-70, val:player.lv, t:75, vy:-0.5, levelup:true});
     shake = Math.max(shake, 6);
@@ -1018,6 +1093,7 @@ const PARRY_FREEZE = 22;     // how long a parried enemy is stunned
 let parryFlash = 0;
 function inParryWindow(){ return player.dashT > DASH_TIME - PARRY_WINDOW; }
 function onParry(e){
+  SFX.parry();
   parryFlash = 18;
   hitStop = 10;
   shake = Math.max(shake, 12);
@@ -1048,6 +1124,7 @@ let specialT = 0;
 function trySpecial(){
   if(player.rage < RAGE_MAX || specialT>0 || player.atkT>0) return;
   player.rage = 0;
+  SFX.special();
   specialT = 34;
   hitStop = 8;
   shake = 18;
@@ -1118,6 +1195,7 @@ function tryAttack(){
   player.sw = sw;
   player.atkT = sw.total;
   player.atkCd = sw.total + ATK_CD;
+  SFX.swing();
   player.comboWin = 0; // opens again when this swing's active window ends
   enemies.forEach(e=>e._hitThisSwing=false);
 }
@@ -1135,6 +1213,7 @@ function tryDash(){
     player.fx = ix/il; player.fy = iy/il;
     player.fang = Math.atan2(player.fy, player.fx);
   }
+  SFX.dash();
   player.dashT = DASH_TIME; player.dashCd = DASH_TIME + DASH_CD; player.iFr = DASH_IFR;
   player.dashAtkWin = DASH_TIME + 22; // stays open ~22 frames after dash ends
 }
@@ -1277,12 +1356,14 @@ function update(){
             const kill = e.hp<=0;
             hitStop = sw.hs + (kill?3:0); shake = sw.hs+2+(kill?3:0);
             spawnHitFx(e.x,e.y,ang, dmg>=3 || kill);
+            if(kill) SFX.kill(); else SFX.hit(dmg>=3);
             popups.push({x:e.x, y:e.y-e.r-4, val:dmg, t:32, vy:-0.8,
                          big: dmg>=3});
             if(e.hp<=0){
               spawnDeathFx(e.x,e.y);
               gainXP(e.xp || 3, e.x, e.y);
               player.gold += e.gold || 1;
+              SFX.coin();
               updateHUD();
               // Heal drops scale with need: barely any when healthy, generous
               // when nearly dead. Keeps fights tense without dead-ending a run.
@@ -1313,6 +1394,7 @@ function update(){
   if(g && !gateOpen && enemies.length===0){
     gateOpen = true;
     if(!clearedMaps.includes(curMap)){ clearedMaps.push(curMap); saveGame(); }
+    SFX.gate();
     mapBannerText = '길이 열렸다 — ' + g.label;
     mapBanner = 150;
     // start fetching the boss track now so the reveal isn't silent while it buffers
@@ -1363,7 +1445,7 @@ function update(){
           // stand still, telegraph, then fire
           e.stateT--;
           if(e.stateT<=0){
-            bullets.push(makeRock(e.x, e.y, dx/d*2.1, dy/d*2.1));
+            bullets.push(makeRock(e.x, e.y, dx/d*2.1, dy/d*2.1)); SFX.rock();
             e.state='cool'; e.stateT=110+Math.random()*40;
           }
         } else if(e.state==='cool'){
@@ -1622,6 +1704,7 @@ function update(){
       if(player.hp<player.maxhp){
         player.hp=Math.min(player.maxhp, player.hp+o.heal);
         updateHUD();
+        SFX.heal();
         popups.push({x:player.x, y:player.y-player.r-6, val:o.heal, t:36, vy:-0.9, heal:true});
         o.t=0;
       }
