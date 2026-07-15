@@ -1,10 +1,11 @@
-const CACHE = 'ys-v0_28';
+const CACHE = 'ys-v0_29';
 const ASSETS = [
   './',
   './index.html',
   './manifest.json',
   './icon-192.png',
-  './icon-512.png'
+  './icon-512.png',
+  './bgm.mp3'
 ];
 
 self.addEventListener('install', e => {
