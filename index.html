@@ -44,7 +44,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.40</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · 남은 적 <b id="left">0</b> · <span id="ver">v0.41</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
 </div>
 <div id="hint">PC: WASD 이동 · J 공격(연타=콤보) · K 대시 · 대시중 J=대시공격</div>
@@ -168,6 +168,7 @@ const player = {
   fx:1, fy:0,               // facing
   fang:0,                   // smoothed facing angle (radians)
   breath:0,                 // idle breathing phase
+  walkT:0,                  // walk-cycle phase (advances with distance moved)
   vx:0, vy:0,               // velocity (momentum)
   atkT:0, atkCd:0,          // attack anim timer / cooldown
   combo:0, comboWin:0,      // combo step (0-2) / input buffer window
@@ -410,9 +411,15 @@ const HERO_CELL = 128; // each cell in the 512x512 sheet
 const HERO_ROW = { idle:0, walk:1, attack:2, dash:3 };
 const HERO_COL = { down:0, up:1, left:2, right:3 };
 // draw the hero from the sheet at world (cx,cy); h = on-screen height in px; tint optional overlay
-function drawHero(cx, cy, h, state, dir, tint){
+// walkFrame: when state==='walk', 0/1 alternates between the idle and walk cells.
+// The sheet only ships ONE walk pose per direction, so a static walk row made the
+// hero slide across the ground with frozen legs. Alternating the two poses gives
+// an actual step cycle until proper 2-frame walk art exists.
+function drawHero(cx, cy, h, state, dir, tint, walkFrame){
   if(!heroSheetReady){ drawSprite('hero', cx, cy, h/20, dir==='left', tint); return; }
-  const col = HERO_COL[dir] ?? 0, row = HERO_ROW[state] ?? 0;
+  const col = HERO_COL[dir] ?? 0;
+  let row = HERO_ROW[state] ?? 0;
+  if(state==='walk' && walkFrame===0) row = HERO_ROW.idle;
   const sx = col*HERO_CELL, sy = row*HERO_CELL;
   const scale = h/HERO_CELL;
   const w = HERO_CELL*scale;
@@ -744,6 +751,11 @@ function update(){
     if(Math.abs(player.vy)<0.02) player.vy = 0;
   }
   player.x += player.vx; player.y += player.vy;
+  // walk cycle advances with DISTANCE moved, not time — so the feet match the
+  // ground whether he's accelerating, at full speed, or coasting to a stop.
+  // 0.115 puts a full stride at ~3.5 steps/sec at top speed; faster than that
+  // and the legs just flicker instead of reading as steps.
+  player.walkT += Math.hypot(player.vx, player.vy) * 0.115;
   player.x = Math.max(player.r, Math.min(WORLD.w-player.r, player.x));
   player.y = Math.max(player.r, Math.min(WORLD.h-player.r, player.y));
   ({x:player.x, y:player.y} = collideWalls(player.x, player.y, player.r));
@@ -1334,6 +1346,13 @@ function draw(){
       yOff = -(h-124)/2 + br*0.9;              // keep feet planted, slight bob
     }
 
+    let wf = 0;
+    if(state==='walk'){
+      wf = Math.floor(player.walkT/5) % 2;
+      // subtle bob synced to the stride: rises mid-step, settles on the plant
+      yOff = -Math.abs(Math.sin(player.walkT*(Math.PI/5))) * 2.0;
+    }
+
     if(state==='attack' && atkSheetReady){
       // map swing progress -> frame. atkT counts DOWN from sw.total to 0.
       const sw = player.sw || COMBO[player.combo];
@@ -1341,7 +1360,7 @@ function draw(){
       const fi = p < SWING_WINDUP ? 0 : (p < SWING_STRIKE ? 1 : 2);
       drawSwing(player.x, player.y, 132, dir, fi, tint);
     } else {
-      drawHero(player.x, player.y + yOff, h, state, dir, tint);
+      drawHero(player.x, player.y + yOff, h, state, dir, tint, wf);
     }
   }
 
