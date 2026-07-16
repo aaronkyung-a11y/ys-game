@@ -52,7 +52,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.73</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.74</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
   <div id="ragewrap"><div id="ragebar"></div></div>
 </div>
@@ -548,6 +548,16 @@ function updateAlly(){
   if(ally.iFr>0) ally.iFr--;
   if(ally.atkCd>0) ally.atkCd--;
 
+  if(ally.scripted){
+    // walks steadily toward the far gate, always ahead of you, never looking back
+    moveWithSlide(ally, ally.spd, 0);
+    ally.walkT += ally.spd*0.5;
+    ally.face = 'right';
+    // never let him catch up — she stays out of reach the whole corridor
+    if(ally.x < player.x + 200) ally.x = player.x + 200;
+    return;
+  }
+
   if(ally.down){
     // knocked down: she stays put until the story picks her back up
     ally.downT++;
@@ -737,57 +747,74 @@ function drawDialogue(){
 // read one way on the first pass and another way after the reveal: she is
 // never lying, she is just answering a question he hasn't asked yet.
 const STORY = {
+  // Rewritten for the version where she WALKS WITH YOU. Every line is true and
+  // every line is bait. She never says a false thing — she just answers the
+  // question he can't think to ask. On a second run the warmth reads as method.
   sanctum: [
     { who:null,   text:'…얼마나 잠들어 있었는지 알 수 없다.' },
     { who:null,   text:'이름도, 여기 온 이유도 떠오르지 않는다. 손에 검이 쥐여 있다는 것만이 확실하다.' },
-    { who:'기사', face:'calm', text:'일어났구나.' },
-    { who:'기사', face:'warm', text:'놀라지 마라. 나는 멀리 있다. 목소리만 닿을 뿐이야.' },
-    { who:'기사', face:'cold', text:'네가 누구인지 묻지 않겠다. 지금은 그게 중요하지 않으니.' },
-    { who:'기사', face:'calm', text:'동쪽으로 가라. 길을 열어두었다.' },
+    { who:null,   text:'황금 갑옷을 입은 여자가 내려다보고 있다. 언제부터 거기 있었는지 모르겠다.' },
+    { who:'기사', face:'calm',   text:'일어났구나.' },
+    { who:'기사', face:'warm',   text:'이름은?' },
+    { who:null,   text:'대답이 나오지 않는다.' },
+    { who:'기사', face:'cold',   text:'…그렇군.' },
+    { who:'기사', face:'warm',   text:'상관없다. 지금 중요한 건 그게 아니니.' },
+    { who:'기사', face:'calm',   text:'이 땅에 괴물이 넘친다. 나 혼자로는 부족하다.' },
+    { who:'기사', face:'warm',   text:'검을 쥘 수 있나? 그럼 됐다. 따라와라.' },
   ],
   field: [
-    { who:'기사', face:'sad', text:'이 들판은 한때 밀밭이었다. 믿기 어렵겠지만.' },
-    { who:'기사', face:'warm', text:'룬을 하나 남겨두었다. 상인에게 가면 받을 수 있을 것이다.' },
-    { who:'기사', face:'sad', text:'…네 몸은 검을 기억하는군. 좋은 일이다.' },
+    { who:'기사', face:'calm',   text:'여기부터는 놈들의 영역이다. 내 뒤에 붙어라.' },
+    { who:null,   text:'그녀가 앞서 나간다. 망설임이 없다.' },
+    { who:'기사', face:'warm',   text:'…잘 싸우는군. 몸이 기억하고 있어.' },
+    { who:'기사', face:'sad',    text:'이 들판은 한때 밀밭이었다. 믿기 어렵겠지만.' },
+    { who:'기사', face:'calm',   text:'상인에게 가라. 룬을 하나 맡겨두었다.' },
   ],
   ruins: [
     { who:null,   text:'무너진 벽에 문양이 새겨져 있다. 읽을 수 없지만, 어딘가 낯익다.' },
-    { who:'기사', face:'calm', text:'그건 봉인의 문양이다. 왕국이 무너지던 밤에 세웠지.' },
-    { who:'기사', face:'sad', text:'대가는 있었다. 나는 이곳을 떠날 수 없게 되었다.' },
-    { who:'기사', face:'calm', text:'아래로 내려가라. 묘지를 지나야 그것에 닿을 수 있다.' },
+    { who:'기사', face:'calm',   text:'봉인의 문양이다. 왕국이 무너지던 밤에 세웠지.' },
+    { who:null,   text:'그녀가 문양을 오래 바라본다.' },
+    { who:'기사', face:'sad',    text:'대가는 있었다. 나는 이곳을 떠날 수 없게 되었다.' },
+    { who:'기사', face:'warm',   text:'…미안. 무거운 얘기를 했군.' },
+    { who:'기사', face:'calm',   text:'가자. 아래로 내려가야 한다.' },
   ],
   crypt: [
     { who:null,   text:'공기가 무겁다. 벽을 따라 관들이 늘어서 있다.' },
-    { who:'기사', face:'sad', text:'내 기사들이다. 마지막까지 나와 함께 섰던.' },
-    { who:'기사', face:'sad', text:'…미안하다. 이런 곳을 지나게 해서.' },
-    { who:'기사', face:'calm', text:'조금만 더 가면 된다. 오크 군주가 그 아래에 있다.' },
-    { who:'기사', face:'cold', text:'그것만 쓰러뜨리면… 모든 게 끝난다.' },
+    { who:'기사', face:'sad',    text:'내 기사들이다. 마지막까지 나와 함께 섰던.' },
+    { who:'기사', face:'sad',    text:'…이런 곳을 지나게 해서 미안하다.' },
+    { who:'기사', face:'calm',   text:'조심해라. 여긴 좁다. 놈들이 등을 노린다.' },
+    { who:'기사', face:'warm',   text:'네 등은 내가 본다. 내 등은 네가 봐줘.' },
   ],
   lair: [
     { who:'기사', face:'fierce', text:'저것이다.' },
-    { who:'기사', face:'cold', text:'오랫동안 저것을 죽여줄 자를 기다렸다.' },
-    { who:'기사', face:'warm', text:'부탁한다.' },
+    { who:'기사', face:'cold',   text:'오랫동안 저것을 죽여줄 자를 기다렸다.' },
+    { who:null,   text:'그녀가 검을 뽑는다. 상처 입은 몸으로.' },
+    { who:'기사', face:'warm',   text:'…같이 가자. 여기까지 왔으니.' },
   ],
   corridor: [
     { who:null,   text:'오크 군주가 쓰러졌다. 아무 소리도 나지 않는다.' },
-    { who:null,   text:'회랑 끝에, 처음으로 그녀의 모습이 보인다. 황금 갑옷.' },
-    { who:'기사', face:'sad', text:'…고맙다. 진심이다.' },
-    { who:'기사', face:'cold', text:'저것은 자물쇠였다. 무언가를 가두는.' },
-    { who:'기사', face:'cold', text:'네가 그걸 부숴주었다.' },
-    { who:null,   text:'그녀가 걸음을 멈춘다. 등을 돌린 채.' },
-    { who:'기사', face:'cold', text:'봉인이 가둔 건 오크 군주가 아니었다.' },
+    { who:null,   text:'그녀가 일어선다.' },
+    { who:null,   text:'…상처가 없다.' },
+    { who:null,   text:'묘지에서 부러졌던 어깨도, 방금 전 무릎도. 아무 흔적이 없다.' },
+    { who:'기사', face:'cold',   text:'고맙다. 진심이다.' },
+    { who:'기사', face:'cold',   text:'저것은 자물쇠였다. 무언가를 가두는.' },
+    { who:'기사', face:'cold',   text:'네가 그걸 부숴주었다.' },
+    { who:null,   text:'그녀가 앞서 걷기 시작한다. 뒤돌아보지 않는다.' },
+    { who:'기사', face:'cold',   text:'봉인이 가둔 건 오크 군주가 아니었다.' },
   ],
   hall: [
-    { who:'기사', face:'cold', text:'네가 왜 기억을 잃었는지 궁금하지 않았나.' },
-    { who:'기사', face:'sad', text:'봉인의 대가다. 너에게도, 나에게도.' },
-    { who:null,   text:'그녀가 검을 뽑는다.' },
+    { who:'기사', face:'cold',   text:'네가 왜 기억을 잃었는지, 한 번도 묻지 않더군.' },
+    { who:'기사', face:'sad',    text:'봉인의 대가다. 너에게도, 나에게도.' },
+    { who:null,   text:'그녀가 검을 뽑는다. 이번엔 나를 향해.' },
     { who:'기사', face:'fierce', text:'처음부터 알고 있었다. 네가 무엇인지.' },
-    { who:'기사', face:'sad', text:'미안하다. 이번엔 더 오래 버틸 줄 알았는데.' },
+    { who:'기사', face:'cold',   text:'네가 나를 지키게 만들어야 했다. 그래야 여기까지 오니까.' },
+    { who:'기사', face:'sad',    text:'미안하다. 이번엔 더 오래 버틸 줄 알았는데.' },
   ],
   ending: [
-    { who:null,   text:'황금 기사가 무릎을 꿇는다.' },
-    { who:'기사', face:'sad', text:'…역시, 안 되는구나.' },
-    { who:'기사', face:'warm', text:'다음에는… 조금 더 일찍 너를 찾아야겠다.' },
+    { who:null,   text:'황금 기사가 무릎을 꿇는다. 이번엔 진짜로.' },
+    { who:'기사', face:'sad',    text:'…역시, 안 되는구나.' },
+    { who:null,   text:'그녀가 웃는다. 처음 보는 얼굴이다.' },
+    { who:'기사', face:'warm',   text:'그래도 나쁘지 않았다. 함께 걸었던 건.' },
+    { who:'기사', face:'sad',    text:'다음에는… 조금 더 일찍 너를 찾아야겠다.' },
     { who:null,   text:'그녀의 갑옷에서 빛이 흩어진다.' },
     { who:null,   text:'검을 쥔 손이 떨린다. 무언가 기억날 것 같지만, 잡히지 않는다.' },
     { who:null,   text:'문이 열린다. 밖으로 나가는 길이다.' },
@@ -797,6 +824,9 @@ let storySeen = {};        // don't repeat a map's lines on a retry
 // She fights beside you on these maps. This is the whole point of the arc:
 // the final duel only hurts if you actually fought shoulder to shoulder first.
 const ALLY_MAPS = ['field', 'ruins', 'crypt', 'lair'];
+// She also stands in the corridor — but scripted, not fighting. The player
+// needs to SEE the wounds gone while the narration says they're gone.
+const ALLY_SCRIPTED_MAPS = ['corridor'];
 let cryptDownFired = false;   // the crypt beat where she takes a hit for you
 function onAllyDown(){
   if(curMap === 'crypt' && !cryptDownFired){
@@ -1512,6 +1542,13 @@ function loadMap(name, entryX, entryY){
   if(ALLY_MAPS.includes(name)){
     ally = makeAlly(player.x - 70, player.y + 40);
     if(name === 'lair') ally.hp = Math.floor(ALLY_MAX*0.5);   // still wounded from the crypt
+  } else if(ALLY_SCRIPTED_MAPS.includes(name)){
+    // full health, no limp, walking ahead — the reveal is visual
+    ally = makeAlly(player.x + 260, player.y);
+    ally.scripted = true;
+    ally.hp = ALLY_MAX;
+    ally.spd = 1.1;
+    ally.face = 'right';
   }
   updateCamera();
   updateHUD();
