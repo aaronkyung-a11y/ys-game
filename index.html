@@ -52,7 +52,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.75</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.76</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
   <div id="ragewrap"><div id="ragebar"></div></div>
 </div>
@@ -259,6 +259,7 @@ const MAPS = {
     name: '들판',
     w: 2400, h: 1800,
     plan: { grunt:10, charger:4, shooter:4, shield:3 },
+    townDoor: { x:2090, y:840, w:88, h:120 },
     gate: { x:2280, y:840, w:96, h:120, to:'ruins', label:'유적으로' },
     walls: [
       {x:360, y:300, w:260, h:40}, {x:360, y:300, w:40, h:240},
@@ -277,6 +278,7 @@ const MAPS = {
     name: '무너진 유적',
     w: 2000, h: 1600,
     plan: { grunt:6, charger:6, shooter:6, shield:5 },   // harder mix
+    townDoor: { x:1690, y:740, w:88, h:120 },
     gate: { x:1880, y:740, w:96, h:120, to:'crypt', label:'묘지로' },
     walls: [
       {x:300, y:260, w:40, h:420}, {x:300, y:260, w:420, h:40},
@@ -289,10 +291,28 @@ const MAPS = {
       {x:850, y:480, w:70, h:70}, {x:850, y:1250, w:70, h:70},
     ]
   },
+  town: {
+    name: '마지막 마을',
+    w: 1500, h: 1000,
+    plan: {},                     // safe. the only map with no enemies at all.
+    town: true,
+    gate: null,                   // you leave the way you came
+    exit: { x:1380, y:440, w:88, h:120 },
+    walls: [
+      // a few buildings around a square
+      {x:200, y:180, w:240, h:140}, {x:560, y:180, w:200, h:120},
+      {x:900, y:180, w:260, h:150},
+      {x:200, y:640, w:220, h:150}, {x:620, y:680, w:240, h:130},
+      {x:1000, y:640, w:230, h:160},
+      // well in the middle
+      {x:700, y:440, w:70, h:70},
+    ]
+  },
   crypt: {
     name: '지하 묘지',
     w: 1800, h: 1400,
     plan: { grunt:7, shield:6, shooter:5 },   // tight corridors: shields matter
+    townDoor: { x:1490, y:640, w:88, h:120 },
     gate: { x:1680, y:640, w:96, h:120, to:'lair', label:'둥지로' },
     walls: [
       // narrow aisles between the tombs
@@ -377,6 +397,12 @@ const THEMES = {
     floor:'#22252b', floorAlt:'#282c33', grout:'#171920',
     wallTop:'#4a5266', wallFace:'#333947', wallEdge:'#1b1e26',
     speck:'#3d4354', tile:48
+  },
+  // warm, lived-in: the only place left with people in it
+  town: {
+    floor:'#3a3226', floorAlt:'#42392c', grout:'#2a241b',
+    wallTop:'#8a6b46', wallFace:'#5e4a32', wallEdge:'#2e2418',
+    speck:'#6b563c', tile:56
   },
   // the walk before the end — gold bleeding into the stone
   corridor: {
@@ -501,12 +527,6 @@ function recolorTorso(sheet, key, chest){
   armorCache[ck] = c;
   return c;
 }
-// What each shop stocks — later maps sell better gear.
-const SHOP_STOCK = {
-  field: ['w_iron', 'a_leather', 'r_wave'],
-  ruins: ['w_flame', 'a_chain', 'r_blink'],
-  lair:  ['w_gold', 'a_plate', 'r_storm'],
-};
 function equippedAtk(){ return player.weapon ? ITEMS[player.weapon].atk : 0; }
 function equippedHp(){  return player.armor ? (ITEMS[player.armor].hp||0) : 0; }
 function damageReduction(){ return player.armor ? (ITEMS[player.armor].dr||0) : 0; }
@@ -828,6 +848,7 @@ const ALLY_MAPS = ['field', 'ruins', 'crypt', 'lair'];
 // needs to SEE the wounds gone while the narration says they're gone.
 const ALLY_SCRIPTED_MAPS = ['corridor'];
 let cryptDownFired = false;   // the crypt beat where she takes a hit for you
+let townReturn = null;        // which map the town door was entered from
 function onAllyDown(){
   if(curMap === 'crypt' && !cryptDownFired){
     cryptDownFired = true;
@@ -849,18 +870,99 @@ function onAllyDown(){
   }
 }
 
+// ---- TOWN NPCs ----
+// The town is the only place with living people, and that's the point: it sits
+// OUTSIDE the seal, which is why it survived — and why she can't come in.
+// Their lines quietly corroborate her story, and one of them contradicts it.
+const NPCS = [
+  { id:'merchant', x:760, y:600, col:'#4a3a6a', cap:'#5f4d84', name:'상인',
+    shop:true,
+    lines:[
+      { who:'상인', text:'살아있는 손님은 오랜만이네요. 필요한 거 있으면 말해요.' },
+    ] },
+  { id:'inn', x:320, y:400, col:'#6a4a3a', cap:'#8a6650', name:'여관 주인',
+    lines:[
+      { who:'여관 주인', text:'여긴 봉인 바깥이라 무사했어요. 안쪽은… 아무것도 안 남았죠.' },
+      { who:'여관 주인', text:'저 갑옷 입은 분이랑 같이 다니던데.' },
+      { who:'여관 주인', text:'그분은 절대 안 들어와요. 문 앞에서만 서 있다가 가요. 몇 년째.' },
+    ] },
+  { id:'smith', x:1180, y:420, col:'#3a4a5a', cap:'#50667a', name:'대장장이',
+    lines:[
+      { who:'대장장이', text:'그 검, 오래된 물건이군. 요즘 쇠가 아니야.' },
+      { who:'대장장이', text:'…어디서 났나?' },
+      { who:null, text:'대답할 말이 없다.' },
+      { who:'대장장이', text:'뭐, 됐네. 잘 드는 게 중요하지.' },
+    ] },
+  { id:'child', x:560, y:760, col:'#5a5a3a', cap:'#7a7a50', name:'아이',
+    lines:[
+      { who:'아이', text:'아저씨, 저 언니랑 같이 왔죠?' },
+      { who:'아이', text:'할머니가 그러는데, 저 언니 우리 할머니 어릴 때도 똑같았대요.' },
+      { who:'아이', text:'…이상하죠? 사람은 늙는데.' },
+    ] },
+];
+let npcTalked = {};
+function nearNPC(){
+  if(curMap !== 'town') return null;
+  for(const n of NPCS){
+    if(Math.hypot(player.x-n.x, player.y-n.y) < 84) return n;
+  }
+  return null;
+}
+function drawNPCs(){
+  if(curMap !== 'town') return;
+  for(const n of NPCS){
+    const near = Math.hypot(player.x-n.x, player.y-n.y) < 84;
+    const bob = Math.sin(Date.now()*0.003 + n.x)*2;
+    ctx.fillStyle='rgba(0,0,0,.3)';
+    ctx.beginPath(); ctx.ellipse(n.x, n.y+26, 20, 7, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle=n.col;   ctx.fillRect(n.x-15, n.y-20+bob, 30, 44);
+    ctx.fillStyle=n.cap;   ctx.fillRect(n.x-15, n.y-20+bob, 30, 8);
+    ctx.fillStyle='#e8c9a0'; ctx.fillRect(n.x-9, n.y-34+bob, 18, 16);
+    ctx.fillStyle='#ffd36e'; ctx.font='bold 11px system-ui'; ctx.textAlign='center';
+    ctx.fillText(n.name, n.x, n.y-44+bob);
+    if(near){
+      const pulse=0.6+0.4*Math.abs(Math.sin(Date.now()*0.006));
+      ctx.strokeStyle=`rgba(255,211,110,${pulse})`; ctx.lineWidth=2;
+      ctx.strokeRect(n.x-24, n.y-40+bob, 48, 68);
+      ctx.fillStyle=`rgba(255,211,110,${pulse})`; ctx.font='11px system-ui';
+      ctx.fillText(n.shop ? '탭하여 상점' : '탭하여 대화', n.x, n.y+44);
+    }
+    ctx.textAlign='left';
+  }
+  // She waits at the gate. She never comes in — she can't.
+  const g = MAPS.town.exit;
+  if(g && kniSheetReady){
+    const kx = g.x - 90, ky = g.y + g.h/2;
+    drawKnight(kx, ky, 150, 'right', 0, null);
+    ctx.fillStyle='rgba(232,200,106,.85)'; ctx.font='11px system-ui'; ctx.textAlign='center';
+    ctx.fillText('기사', kx, ky-58);
+    ctx.textAlign='left';
+  }
+}
+
 // ---- SHOP ----
 // A temporary merchant standing near each map's gate. This is scaffolding —
 // the plan is a proper town later, so the shop lives in its own block that can
 // be lifted out wholesale rather than threaded through the map code.
 let shopOpen = false;
 let shopBtns = [];
+// The merchant lives in town now — a trader casually standing in a monster-
+// infested ruin never made sense, and the story is about a kingdom that fell.
 function merchantPos(){
-  const m = MAPS[curMap];
-  if(!m.gate || m.boss) return null;
-  return { x: m.gate.x - 150, y: m.gate.y + m.gate.h/2 };
+  if(curMap !== 'town') return null;
+  const n = NPCS.find(n=>n.shop);
+  return n ? { x:n.x, y:n.y } : null;
 }
-function shopStock(){ return SHOP_STOCK[curMap] || []; }
+// Stock is by PROGRESS, not by which map you're standing in — the town is one
+// place, so it stocks whatever you've earned the right to buy.
+function shopStock(){
+  // Tier by how far you've actually got. Only maps with gates count as
+  // "cleared", so this is: field / ruins / crypt.
+  const done = ['field','ruins','crypt'].filter(m=>clearedMaps.includes(m)).length;
+  if(done >= 3) return ['w_gold','a_plate','r_storm'];
+  if(done >= 2) return ['w_flame','a_chain','r_blink'];
+  return ['w_iron','a_leather','r_wave'];
+}
 function canAfford(id){ return player.gold >= ITEMS[id].cost; }
 function owns(id){
   const it=ITEMS[id];
@@ -1511,6 +1613,9 @@ function randomOpenPos(minFromPlayer){
 function populateWorld(){
   enemies = [];
   const m = MAPS[curMap];
+  // already cleared? stay cleared. Otherwise a trip to the shop would refill
+  // the map and gold could be farmed by walking in and out of the door.
+  if(clearedMaps.includes(curMap)) return;
   if(m.boss){
     enemies.push(makeEnemy(m.boss==='knight' ? 'knight' : 'boss', m.w/2, 220));
     return;
@@ -2022,6 +2127,29 @@ function update(){
     loadMap(g.to, 140, MAPS[g.to].h/2);
     return;
   }
+  // town door — open once the map is cleared, same as the gate
+  const td = MAPS[curMap].townDoor;
+  if(td && gateOpen &&
+     player.x > td.x-player.r && player.x < td.x+td.w+player.r &&
+     player.y > td.y-player.r && player.y < td.y+td.h+player.r){
+    townReturn = curMap;
+    SFX.gate();
+    loadMap('town', 200, MAPS.town.h/2);
+    return;
+  }
+  // leaving town: back to wherever you came from, at that map's own door
+  const tx = MAPS[curMap].exit;
+  if(tx && curMap==='town' &&
+     player.x > tx.x-player.r && player.x < tx.x+tx.w+player.r &&
+     player.y > tx.y-player.r && player.y < tx.y+tx.h+player.r){
+    const back = townReturn || 'field';
+    SFX.gate();
+    const d = MAPS[back].townDoor;
+    loadMap(back, d ? d.x-90 : 140, d ? d.y+d.h/2 : MAPS[back].h/2);
+    // returning to a cleared map: the gate is already open
+    gateOpen = true;
+    return;
+  }
   // boss map cleared -> loop back to the field
   if(MAPS[curMap].boss && enemies.length===0 && !bossCleared && !MAPS[curMap].gate){
     bossCleared = true;
@@ -2490,6 +2618,29 @@ function draw(){
       ctx.fillText('탭하여 상점 열기', mp.x, mp.y+44);
     }
     ctx.textAlign='left';
+  }
+
+  drawNPCs();
+
+  // ---- town door ----
+  const tdr = MAPS[curMap].townDoor || (curMap==='town' ? MAPS.town.exit : null);
+  if(tdr){
+    const open = curMap==='town' ? true : gateOpen;
+    if(open){
+      const pulse = 0.55 + 0.45*Math.abs(Math.sin(Date.now()*0.004));
+      ctx.fillStyle = `rgba(255,200,110,${0.16*pulse})`;
+      ctx.fillRect(tdr.x, tdr.y, tdr.w, tdr.h);
+      ctx.strokeStyle = `rgba(255,211,110,${pulse})`; ctx.lineWidth=3;
+      ctx.strokeRect(tdr.x, tdr.y, tdr.w, tdr.h);
+      ctx.fillStyle = `rgba(255,225,170,${pulse})`;
+      ctx.font='bold 12px system-ui'; ctx.textAlign='center';
+      ctx.fillText(curMap==='town' ? '돌아가기' : '마을로', tdr.x+tdr.w/2, tdr.y-10);
+      ctx.textAlign='left';
+    } else {
+      ctx.fillStyle='#232a38'; ctx.fillRect(tdr.x, tdr.y, tdr.w, tdr.h);
+      ctx.strokeStyle='#3a4558'; ctx.lineWidth=3;
+      ctx.strokeRect(tdr.x, tdr.y, tdr.w, tdr.h);
+    }
   }
 
   // ---- exit gate ----
@@ -3277,12 +3428,13 @@ cv.addEventListener('pointerdown', e=>{
   }
 
   if(gameState==='playing'){
-    // tap the merchant to open the shop
-    const mp = merchantPos();
-    if(mp && Math.hypot(player.x-mp.x, player.y-mp.y) < 90){
-      const sx = mp.x - cam.x, sy = mp.y - cam.y;
-      if(Math.abs(x-sx)<44 && Math.abs(y-sy)<60){
-        shopOpen=true; setUIVisible(false);
+    const n = nearNPC();
+    if(n){
+      const sx = n.x - cam.x, sy = n.y - cam.y;
+      if(Math.abs(x-sx)<46 && Math.abs(y-sy)<62){
+        if(n.shop){ shopOpen=true; setUIVisible(false); }
+        else say(n.lines);
+        return;
       }
     }
     return;
