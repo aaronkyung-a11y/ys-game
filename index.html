@@ -52,7 +52,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.65</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.66</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
   <div id="ragewrap"><div id="ragebar"></div></div>
 </div>
@@ -1228,7 +1228,13 @@ function onParry(e){
 // need to engage with the parry. Making it parry-fed means the special is a
 // reward for reading the fight.
 const RAGE_MAX = 100;
+const SPECIAL_LEN = 44;
 let specialT = 0, specialWind = 0, specialKind = null;
+// Cut-in: the whole game freezes, a portrait slams in from the side, then the
+// special releases. The wind-up alone read as limp — a special you spent three
+// parries on should stop the world for a moment.
+let cutIn = 0;            // counts down through the cut-in
+const CUTIN_LEN = 62;
 let blinkTrail = 0, blinkFx = 1, blinkFy = 0;
 // A player-owned beam. Reuses the rock pipeline but carries damage and its own
 // look, so the storm relic doesn't just throw pebbles.
@@ -1261,9 +1267,8 @@ function trySpecial(){
   if(player.rage < RAGE_MAX || specialT>0 || specialWind>0 || player.atkT>0) return;
   player.rage = 0;
   specialKind = rel.sp;
-  specialWind = 16;                      // charge-up frames
-  player.vx *= 0.2; player.vy *= 0.2;    // he plants his feet
-  hitStop = 6;
+  cutIn = CUTIN_LEN;                     // freeze + portrait, then release
+  player.vx = 0; player.vy = 0;
   SFX.charge();
   updateHUD();
 }
@@ -1271,8 +1276,9 @@ function trySpecial(){
 function releaseSpecial(){
   const kind = specialKind;
   SFX.special();
-  specialT = 34;
-  shake = 18;
+  specialT = SPECIAL_LEN;
+  shake = 26;
+  hitStop = 12;          // the world catches up a beat after the hit lands
   if(kind === 'wave'){
     // radial shockwave — crowd clear
     for(const e of enemies){
@@ -2400,7 +2406,8 @@ function draw(){
     ctx.beginPath(); ctx.arc(player.x, player.y, 26+t*54, 0, Math.PI*2); ctx.stroke();
     parryFlash--;
   }
-  // special wind-up: energy gathering in, telegraphing the release
+  // (wind-up visuals are superseded by the cut-in; kept for the storm relic's
+  //  brief gather frame)
   if(specialWind>0){
     const t = 1 - specialWind/16;
     const [cr,cg,cb] = arcRGB();
@@ -2436,7 +2443,7 @@ function draw(){
   }
   // special: expanding blade-coloured shockwave
   if(specialT>0){
-    const t = 1-specialT/34;
+    const t = 1-specialT/SPECIAL_LEN;   // tie to the real duration, not a literal
     const [sr,sg,sb] = arcRGB();
     ctx.strokeStyle=`rgba(${sr},${sg},${sb},${(1-t)*0.9})`;
     ctx.lineWidth=14*(1-t)+2;
@@ -2547,6 +2554,94 @@ function draw(){
     mapBanner--;
   }
 
+  // ---- special cut-in (screen space, freezes play) ----
+  if(cutIn>0){
+    const rel = player.relic ? ITEMS[player.relic] : null;
+    const t = 1 - cutIn/CUTIN_LEN;          // 0 -> 1 over the cut-in
+    const [cr,cg,cb] = arcRGB();
+    // slam in fast, hold, slide out fast
+    let slide;
+    if(t < 0.18)      slide = 1 - Math.pow(1-t/0.18, 3);   // ease-out entry
+    else if(t < 0.72) slide = 1;                            // hold
+    else              slide = 1 - Math.pow((t-0.72)/0.28, 2);
+
+    ctx.save();
+    // darken the frozen world
+    ctx.fillStyle = `rgba(4,6,12,${0.72*slide})`;
+    ctx.fillRect(0,0,W,H);
+
+    // speed streaks racing across
+    ctx.globalAlpha = 0.5*slide;
+    for(let i=0;i<16;i++){
+      const yy = (i*53 + (t*900)) % H;
+      const len = 90 + (i%5)*70;
+      ctx.strokeStyle = i%3===0 ? `rgba(${cr},${cg},${cb},.9)` : 'rgba(255,255,255,.35)';
+      ctx.lineWidth = i%3===0 ? 3 : 1.5;
+      ctx.beginPath(); ctx.moveTo(-len + (t*1400)%(W+len*2), yy);
+      ctx.lineTo(-len + (t*1400)%(W+len*2) + len, yy); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // diagonal banner behind the portrait
+    const bandH = 210;
+    ctx.save();
+    ctx.translate(W/2, H/2);
+    ctx.rotate(-0.08);
+    ctx.fillStyle = `rgba(${cr},${cg},${cb},${0.22*slide})`;
+    ctx.fillRect(-W, -bandH/2, W*2, bandH);
+    ctx.fillStyle = `rgba(8,10,16,${0.85*slide})`;
+    ctx.fillRect(-W, -bandH/2+8, W*2, bandH-16);
+    ctx.strokeStyle = `rgba(${cr},${cg},${cb},${slide})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(-W, -bandH/2+8); ctx.lineTo(W, -bandH/2+8); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-W, bandH/2-8); ctx.lineTo(W, bandH/2-8); ctx.stroke();
+    ctx.restore();
+
+    // the hero portrait — slams in from the left
+    if(heroSheetReady){
+      const px2 = -240 + slide*(W*0.30 + 240);
+      const py2 = H/2;
+      const size = 210;
+      ctx.save();
+      ctx.translate(px2, py2);
+      ctx.scale(1.9, 1.9);
+      // his attack pose, big
+      const cell = 128;
+      ctx.drawImage(atkSheetReady ? bladeSheet() : HERO_SHEET,
+                    3*cell, 1*cell, cell, cell, -cell/2, -cell/2, cell, cell);
+      ctx.restore();
+      // rim light in the weapon colour
+      ctx.globalCompositeOperation='lighter';
+      ctx.globalAlpha = 0.28*slide;
+      ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
+      ctx.beginPath(); ctx.arc(px2, py2, 130, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation='source-over';
+    }
+
+    // relic name + SPECIAL label, sliding in from the right
+    if(rel){
+      const tx = W + 60 - slide*(W*0.42 + 60);
+      ctx.textAlign='right';
+      ctx.font='bold 15px system-ui';
+      ctx.fillStyle=`rgba(255,255,255,${0.75*slide})`;
+      ctx.fillText('필  살  기', W - 40, H/2 - 34);
+      ctx.font='bold 40px system-ui';
+      ctx.strokeStyle='rgba(0,0,0,.7)'; ctx.lineWidth=5;
+      ctx.strokeText(rel.name, Math.min(W-40, tx+W*0.42), H/2 + 16);
+      ctx.fillStyle=`rgb(${cr},${cg},${cb})`;
+      ctx.fillText(rel.name, Math.min(W-40, tx+W*0.42), H/2 + 16);
+      ctx.textAlign='left';
+    }
+
+    // white flash right as it fires
+    if(t > 0.86){
+      ctx.fillStyle = `rgba(255,255,255,${(t-0.86)/0.14 * 0.85})`;
+      ctx.fillRect(0,0,W,H);
+    }
+    ctx.restore();
+  }
+
   // ---- shop panel (screen space) ----
   if(shopOpen){
     shopBtns = [];
@@ -2632,7 +2727,12 @@ function draw(){
 // ---- loop ----
 updateCamera();
 function loop(){
-  if(gameState==='playing' && !shopOpen) update();
+  // The cut-in freezes everything — enemies, projectiles, timers. That pause is
+  // what sells the special as a big deal rather than another button press.
+  if(cutIn>0){
+    cutIn--;
+    if(cutIn===0) releaseSpecial();
+  } else if(gameState==='playing' && !shopOpen) update();
   draw();
   if(gameState==='title') drawTitle();
   else if(gameState==='cleared') drawClear();
