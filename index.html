@@ -52,7 +52,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.71</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.72</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
   <div id="ragewrap"><div id="ragebar"></div></div>
 </div>
@@ -523,6 +523,19 @@ function recalcStats(){
 // grunt can't chew on you while you read) but is always skippable — nobody
 // should be trapped in a cutscene on the fifth attempt at a map.
 let dlgLines = [], dlgIdx = 0, dlgChar = 0, dlgTimer = 0, dlgActive = false;
+// Portrait sheet: one row of expressions for the Knight. Her lines are written
+// to read differently on a second playthrough, so the face doing the talking
+// carries most of that weight — the words alone can't.
+// Shipped as a separate cached FILE, not base64: the HTML is network-first
+// (v0.27), so embedding it would re-download ~200KB on every single load.
+// It's a JPEG composited on the panel colour — this painterly shading is far
+// cheaper as JPEG than as a transparent PNG (776KB -> 191KB).
+const PORT_SHEET = new Image();
+let portReady = false;
+PORT_SHEET.onload = ()=>{ portReady = true; };
+PORT_SHEET.src = 'portraits.jpg';
+const PORT_CELL = 384;
+const PORT_FACE = { calm:0, warm:1, sad:2, cold:3, fierce:4 };
 const DLG_SPEED = 1.6;          // characters revealed per frame
 function say(lines){
   dlgLines = lines; dlgIdx = 0; dlgChar = 0; dlgActive = true;
@@ -545,32 +558,47 @@ function drawDialogue(){
   dlgChar = Math.min(line.text.length, dlgChar + DLG_SPEED);
   const shown = line.text.slice(0, Math.floor(dlgChar));
 
-  const bh = 118, by = H - bh - 14, bx = 24, bw = W - 48;
+  const bh = 128, by = H - bh - 14, bx = 24, bw = W - 48;
+  const hasPortrait = line.who === '기사' && portReady;
+  const pSize = 340;                       // a bust, not a box icon — dominates the left
   ctx.fillStyle = 'rgba(6,8,14,.92)';
   ctx.fillRect(bx, by, bw, bh);
   ctx.strokeStyle = line.who === '기사' ? '#e8c86a' : '#4a5a72';
   ctx.lineWidth = 2;
   ctx.strokeRect(bx, by, bw, bh);
 
+  if(hasPortrait){
+    const fi = PORT_FACE[line.face || 'calm'] ?? 0;
+    const px2 = bx - 34;
+    const py2 = H - pSize + 8;              // stands on the bottom edge, rising past the panel
+    // The art is opaque (JPEG on the panel colour), so no glow behind it —
+    // a radial gradient would just render as a visible box, the same mistake
+    // as the v0.69 orange rectangle.
+    ctx.drawImage(PORT_SHEET, fi*PORT_CELL, 0, PORT_CELL, PORT_CELL, px2, py2, pSize, pSize);
+    ctx.strokeStyle='rgba(232,200,106,.55)'; ctx.lineWidth=2;
+    ctx.strokeRect(px2, py2, pSize, pSize);
+  }
+  const textX = bx + (hasPortrait ? pSize - 60 : 18);
+
   if(line.who){
     ctx.fillStyle = line.who === '기사' ? '#e8c86a' : '#8fa3c0';
     ctx.font = 'bold 14px system-ui';
     ctx.textAlign = 'left';
-    ctx.fillText(line.who, bx + 18, by + 26);
+    ctx.fillText(line.who, textX, by + 26);
   }
   ctx.fillStyle = '#dbe6f5';
   ctx.font = '15px system-ui';
   ctx.textAlign = 'left';
   // wrap by measured width so long Korean lines don't overflow
-  const maxW = bw - 36;
+  const maxW = bw - (hasPortrait ? pSize + 44 : 36);
   let y = by + (line.who ? 54 : 40);
   let cur = '';
   for(const ch of shown){
     if(ctx.measureText(cur + ch).width > maxW){
-      ctx.fillText(cur, bx + 18, y); y += 22; cur = ch;
+      ctx.fillText(cur, textX, y); y += 22; cur = ch;
     } else cur += ch;
   }
-  ctx.fillText(cur, bx + 18, y);
+  ctx.fillText(cur, textX, y);
 
   if(dlgChar >= line.text.length){
     const blink = Math.sin(Date.now()*0.006) > 0;
@@ -590,54 +618,54 @@ const STORY = {
   sanctum: [
     { who:null,   text:'…얼마나 잠들어 있었는지 알 수 없다.' },
     { who:null,   text:'이름도, 여기 온 이유도 떠오르지 않는다. 손에 검이 쥐여 있다는 것만이 확실하다.' },
-    { who:'기사', text:'일어났구나.' },
-    { who:'기사', text:'놀라지 마라. 나는 멀리 있다. 목소리만 닿을 뿐이야.' },
-    { who:'기사', text:'네가 누구인지 묻지 않겠다. 지금은 그게 중요하지 않으니.' },
-    { who:'기사', text:'동쪽으로 가라. 길을 열어두었다.' },
+    { who:'기사', face:'calm', text:'일어났구나.' },
+    { who:'기사', face:'warm', text:'놀라지 마라. 나는 멀리 있다. 목소리만 닿을 뿐이야.' },
+    { who:'기사', face:'cold', text:'네가 누구인지 묻지 않겠다. 지금은 그게 중요하지 않으니.' },
+    { who:'기사', face:'calm', text:'동쪽으로 가라. 길을 열어두었다.' },
   ],
   field: [
-    { who:'기사', text:'이 들판은 한때 밀밭이었다. 믿기 어렵겠지만.' },
-    { who:'기사', text:'룬을 하나 남겨두었다. 상인에게 가면 받을 수 있을 것이다.' },
-    { who:'기사', text:'…네 몸은 검을 기억하는군. 좋은 일이다.' },
+    { who:'기사', face:'sad', text:'이 들판은 한때 밀밭이었다. 믿기 어렵겠지만.' },
+    { who:'기사', face:'warm', text:'룬을 하나 남겨두었다. 상인에게 가면 받을 수 있을 것이다.' },
+    { who:'기사', face:'sad', text:'…네 몸은 검을 기억하는군. 좋은 일이다.' },
   ],
   ruins: [
     { who:null,   text:'무너진 벽에 문양이 새겨져 있다. 읽을 수 없지만, 어딘가 낯익다.' },
-    { who:'기사', text:'그건 봉인의 문양이다. 왕국이 무너지던 밤에 세웠지.' },
-    { who:'기사', text:'대가는 있었다. 나는 이곳을 떠날 수 없게 되었다.' },
-    { who:'기사', text:'아래로 내려가라. 묘지를 지나야 그것에 닿을 수 있다.' },
+    { who:'기사', face:'calm', text:'그건 봉인의 문양이다. 왕국이 무너지던 밤에 세웠지.' },
+    { who:'기사', face:'sad', text:'대가는 있었다. 나는 이곳을 떠날 수 없게 되었다.' },
+    { who:'기사', face:'calm', text:'아래로 내려가라. 묘지를 지나야 그것에 닿을 수 있다.' },
   ],
   crypt: [
     { who:null,   text:'공기가 무겁다. 벽을 따라 관들이 늘어서 있다.' },
-    { who:'기사', text:'내 기사들이다. 마지막까지 나와 함께 섰던.' },
-    { who:'기사', text:'…미안하다. 이런 곳을 지나게 해서.' },
-    { who:'기사', text:'조금만 더 가면 된다. 오크 군주가 그 아래에 있다.' },
-    { who:'기사', text:'그것만 쓰러뜨리면… 모든 게 끝난다.' },
+    { who:'기사', face:'sad', text:'내 기사들이다. 마지막까지 나와 함께 섰던.' },
+    { who:'기사', face:'sad', text:'…미안하다. 이런 곳을 지나게 해서.' },
+    { who:'기사', face:'calm', text:'조금만 더 가면 된다. 오크 군주가 그 아래에 있다.' },
+    { who:'기사', face:'cold', text:'그것만 쓰러뜨리면… 모든 게 끝난다.' },
   ],
   lair: [
-    { who:'기사', text:'저것이다.' },
-    { who:'기사', text:'오랫동안 저것을 죽여줄 자를 기다렸다.' },
-    { who:'기사', text:'부탁한다.' },
+    { who:'기사', face:'fierce', text:'저것이다.' },
+    { who:'기사', face:'cold', text:'오랫동안 저것을 죽여줄 자를 기다렸다.' },
+    { who:'기사', face:'warm', text:'부탁한다.' },
   ],
   corridor: [
     { who:null,   text:'오크 군주가 쓰러졌다. 아무 소리도 나지 않는다.' },
     { who:null,   text:'회랑 끝에, 처음으로 그녀의 모습이 보인다. 황금 갑옷.' },
-    { who:'기사', text:'…고맙다. 진심이다.' },
-    { who:'기사', text:'저것은 자물쇠였다. 무언가를 가두는.' },
-    { who:'기사', text:'네가 그걸 부숴주었다.' },
+    { who:'기사', face:'sad', text:'…고맙다. 진심이다.' },
+    { who:'기사', face:'cold', text:'저것은 자물쇠였다. 무언가를 가두는.' },
+    { who:'기사', face:'cold', text:'네가 그걸 부숴주었다.' },
     { who:null,   text:'그녀가 걸음을 멈춘다. 등을 돌린 채.' },
-    { who:'기사', text:'봉인이 가둔 건 오크 군주가 아니었다.' },
+    { who:'기사', face:'cold', text:'봉인이 가둔 건 오크 군주가 아니었다.' },
   ],
   hall: [
-    { who:'기사', text:'네가 왜 기억을 잃었는지 궁금하지 않았나.' },
-    { who:'기사', text:'봉인의 대가다. 너에게도, 나에게도.' },
+    { who:'기사', face:'cold', text:'네가 왜 기억을 잃었는지 궁금하지 않았나.' },
+    { who:'기사', face:'sad', text:'봉인의 대가다. 너에게도, 나에게도.' },
     { who:null,   text:'그녀가 검을 뽑는다.' },
-    { who:'기사', text:'처음부터 알고 있었다. 네가 무엇인지.' },
-    { who:'기사', text:'미안하다. 이번엔 더 오래 버틸 줄 알았는데.' },
+    { who:'기사', face:'fierce', text:'처음부터 알고 있었다. 네가 무엇인지.' },
+    { who:'기사', face:'sad', text:'미안하다. 이번엔 더 오래 버틸 줄 알았는데.' },
   ],
   ending: [
     { who:null,   text:'황금 기사가 무릎을 꿇는다.' },
-    { who:'기사', text:'…역시, 안 되는구나.' },
-    { who:'기사', text:'다음에는… 조금 더 일찍 너를 찾아야겠다.' },
+    { who:'기사', face:'sad', text:'…역시, 안 되는구나.' },
+    { who:'기사', face:'warm', text:'다음에는… 조금 더 일찍 너를 찾아야겠다.' },
     { who:null,   text:'그녀의 갑옷에서 빛이 흩어진다.' },
     { who:null,   text:'검을 쥔 손이 떨린다. 무언가 기억날 것 같지만, 잡히지 않는다.' },
     { who:null,   text:'문이 열린다. 밖으로 나가는 길이다.' },
