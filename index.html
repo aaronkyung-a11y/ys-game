@@ -52,7 +52,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.72</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.73</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
   <div id="ragewrap"><div id="ragebar"></div></div>
 </div>
@@ -518,6 +518,128 @@ function recalcStats(){
   updateHUD();
 }
 
+// ---- ALLY: the Golden Knight fighting alongside you ----
+// She is NOT an enemy with a flag flipped. Her whole job is different: she
+// picks her own targets, keeps station on the player, and when her HP runs out
+// she goes DOWN rather than dying — the story needs her to get back up.
+let ally = null;
+const ALLY_MAX = 260;
+function makeAlly(x, y){
+  return {
+    x, y, r:30, spd:3.6, hp:ALLY_MAX, maxhp:ALLY_MAX,
+    face:'down', walkT:0, px:x, py:y,
+    state:'follow', stateT:0, atkT:0, atkCd:0, target:null,
+    hitFlash:0, iFr:0, down:false, downT:0,
+    scripted:false,        // when true the story drives her, not the AI
+  };
+}
+function allyNearestEnemy(range){
+  let best=null, bd=range;
+  for(const e of enemies){
+    if(e.hp<=0) continue;
+    const d=Math.hypot(e.x-ally.x, e.y-ally.y);
+    if(d<bd && hasLineOfSight(ally.x, ally.y, e.x, e.y)){ bd=d; best=e; }
+  }
+  return best;
+}
+function updateAlly(){
+  if(!ally) return;
+  if(ally.hitFlash>0) ally.hitFlash--;
+  if(ally.iFr>0) ally.iFr--;
+  if(ally.atkCd>0) ally.atkCd--;
+
+  if(ally.down){
+    // knocked down: she stays put until the story picks her back up
+    ally.downT++;
+    return;
+  }
+
+  const pdx=player.x-ally.x, pdy=player.y-ally.y;
+  const pd=Math.hypot(pdx,pdy)||1;
+
+  if(ally.atkT>0){
+    ally.atkT--;
+    // her swing lands at the midpoint of the animation
+    if(ally.atkT===8 && ally.target && ally.target.hp>0){
+      const d=Math.hypot(ally.target.x-ally.x, ally.target.y-ally.y);
+      if(d < 120){
+        const ang=Math.atan2(ally.target.y-ally.y, ally.target.x-ally.x);
+        ally.target.hp -= 6;
+        ally.target.hitFlash=6;
+        ally.target.knx=Math.cos(ang)*12*ally.target.kb;
+        ally.target.kny=Math.sin(ang)*12*ally.target.kb;
+        spawnHitFx(ally.target.x, ally.target.y, ang, false);
+        SFX.hit(false);
+        if(ally.target.hp<=0){
+          spawnDeathFx(ally.target.x, ally.target.y);
+          SFX.kill();
+        }
+      }
+    }
+    return;
+  }
+
+  // pick a fight if one is close, otherwise stay near the player
+  const foe = allyNearestEnemy(320);
+  if(foe && pd < 520){
+    ally.target = foe;
+    const fd=Math.hypot(foe.x-ally.x, foe.y-ally.y)||1;
+    ally.face = dir4(foe.x-ally.x, foe.y-ally.y);
+    if(fd > 70){
+      moveWithSlide(ally, (foe.x-ally.x)/fd*ally.spd, (foe.y-ally.y)/fd*ally.spd);
+      ally.walkT += ally.spd*0.5;
+    } else if(ally.atkCd<=0){
+      ally.atkT=18; ally.atkCd=34;
+      SFX.swing();
+    }
+  } else {
+    // follow, but don't crowd him
+    ally.target=null;
+    if(pd > 150){
+      moveWithSlide(ally, pdx/pd*ally.spd, pdy/pd*ally.spd);
+      ally.walkT += ally.spd*0.5;
+      ally.face = dir4(pdx, pdy);
+    } else {
+      ally.face = dir4(pdx, pdy);
+    }
+  }
+  ally.px=ally.x; ally.py=ally.y;
+}
+function hurtAlly(dmg){
+  if(!ally || ally.down || ally.iFr>0 || ally.scripted) return;
+  ally.hp -= dmg;
+  ally.hitFlash=10; ally.iFr=24;
+  if(ally.hp<=0){
+    ally.hp=0; ally.down=true; ally.downT=0;
+    shake=Math.max(shake,14);
+    if(typeof onAllyDown==='function') onAllyDown();
+  }
+}
+function drawAlly(){
+  if(!ally || !kniSheetReady) return;
+  const striking = ally.atkT>0;
+  const row = striking ? 2 : (Math.floor(ally.walkT/7)%2);
+  let tint=null;
+  if(ally.hitFlash>0) tint='#ffffff';
+  if(ally.down){
+    // slumped: squashed and greyed, clearly not dead but not fighting
+    ctx.save();
+    ctx.globalAlpha=0.75;
+    drawKnight(ally.x, ally.y+18, 150, 'down', 0, '#6a6a72');
+    ctx.restore();
+    return;
+  }
+  drawKnight(ally.x, ally.y, 168, ally.face, row, tint);
+  // her health, above her head — the player needs to see her losing
+  if(ally.hp < ally.maxhp){
+    const bw=54, bx=ally.x-bw/2, by=ally.y-58;
+    ctx.fillStyle='rgba(10,14,20,.8)'; ctx.fillRect(bx-1,by-1,bw+2,7);
+    ctx.fillStyle='#3a2f1a'; ctx.fillRect(bx,by,bw,5);
+    ctx.fillStyle= ally.hp/ally.maxhp<0.35 ? '#ff6a4d' : '#e8c86a';
+    ctx.fillRect(bx,by,bw*(ally.hp/ally.maxhp),5);
+  }
+}
+
 // ---- DIALOGUE ----
 // Story text is delivered as a small panel at the bottom. It pauses play (so a
 // grunt can't chew on you while you read) but is always skippable — nobody
@@ -672,6 +794,30 @@ const STORY = {
   ],
 };
 let storySeen = {};        // don't repeat a map's lines on a retry
+// She fights beside you on these maps. This is the whole point of the arc:
+// the final duel only hurts if you actually fought shoulder to shoulder first.
+const ALLY_MAPS = ['field', 'ruins', 'crypt', 'lair'];
+let cryptDownFired = false;   // the crypt beat where she takes a hit for you
+function onAllyDown(){
+  if(curMap === 'crypt' && !cryptDownFired){
+    cryptDownFired = true;
+    say([
+      { who:null,   text:'그녀가 쓰러진다.' },
+      { who:'기사', face:'sad', text:'…괜찮다. 이 정도는.' },
+      { who:null,   text:'괜찮아 보이지 않는다.' },
+      { who:'기사', face:'warm', text:'가라. 내가 뒤를 맡겠다.' },
+    ]);
+    // she gets back up after a beat — wounded, slower
+    setTimeout(()=>{
+      if(ally){ ally.down=false; ally.hp=Math.floor(ALLY_MAX*0.35); ally.spd=2.8; }
+    }, 2600);
+  } else if(curMap === 'lair'){
+    say([
+      { who:null,   text:'그녀가 무릎을 꿇는다. 오크 군주가 그녀를 내려다본다.' },
+      { who:'기사', face:'fierce', text:'…뭘 보고 있나. 끝내라!' },
+    ]);
+  }
+}
 
 // ---- SHOP ----
 // A temporary merchant standing near each map's gate. This is scaffolding —
@@ -1359,9 +1505,14 @@ function loadMap(name, entryX, entryY){
   player.vx = 0; player.vy = 0;
   bullets=[]; orbs=[]; popups=[]; effects=[];
   gateOpen = false;
+  ally = null;                 // each map's script decides if she's here
   mapBannerText = m.name; mapBanner = 150;
   setTrack(m.boss ? 'boss' : 'field');
   populateWorld();
+  if(ALLY_MAPS.includes(name)){
+    ally = makeAlly(player.x - 70, player.y + 40);
+    if(name === 'lair') ally.hp = Math.floor(ALLY_MAX*0.5);   // still wounded from the crypt
+  }
   updateCamera();
   updateHUD();
   saveGame();          // autosave at every map transition
@@ -2052,6 +2203,13 @@ function update(){
         }
       }
 
+      // Enemies hit the ally too — otherwise she's invulnerable scenery and
+      // "she got hurt protecting you" would be a caption, not an event.
+      if(ally && !ally.down && e.atkCd<=0){
+        const ad=Math.hypot(ally.x-e.x, ally.y-e.y);
+        if(ad < e.r+ally.r+2){ hurtAlly(e.touch); e.atkCd=30; }
+      }
+
       // Parry is checked BEFORE the i-frame gate. Dashing grants iFr, and the
       // parry window lives inside the dash — so with the check nested under
       // `iFr<=0` the parry could never fire at all. It was unreachable from the
@@ -2073,6 +2231,8 @@ function update(){
     ({x:e.x, y:e.y} = collideWalls(e.x, e.y, e.r));
     if(e.atkCd>0)e.atkCd--;    if(e.hitFlash>0)e.hitFlash--;
   }
+
+  updateAlly();
 
   // ---- separation: keep enemies from collapsing into a single blob ----
   // Without this, identical chasers converge on the same point and read as one mass.
@@ -2143,6 +2303,9 @@ function update(){
       }
       if(b.x<0||b.x>WORLD.w||b.y<0||b.y>WORLD.h||pointInWall(b.x,b.y)) b.t=0;
       continue;
+    }
+    if(ally && !ally.down && !b.beam && Math.hypot(ally.x-b.x, ally.y-b.y) < b.r+ally.r){
+      hurtAlly(8); b.t=0; continue;
     }
     const dx=player.x-b.x, dy=player.y-b.y;
     // same fix as contact damage: parry must be tested outside the iFr gate
@@ -2544,6 +2707,8 @@ function draw(){
       ctx.restore();
     }
   }
+
+  drawAlly();
 
   // player
   if(!(player.hitFlash>0 && player.iFr>0 && (player.iFr%4<2))){ // blink when hurt
