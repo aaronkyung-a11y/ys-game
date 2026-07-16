@@ -52,7 +52,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.68</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.69</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
   <div id="ragewrap"><div id="ragebar"></div></div>
 </div>
@@ -2616,13 +2616,10 @@ function draw(){
       ctx.globalAlpha = slide;
       ctx.drawImage(CUTIN_IMG, dx, dy, dw, dh);
       ctx.globalAlpha = 1;
-      // rim wash in the weapon's colour so it belongs to this sword
-      ctx.globalCompositeOperation='lighter';
-      ctx.globalAlpha = 0.14*slide;
-      ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
-      ctx.fillRect(dx, dy, dw, dh);
-      ctx.globalAlpha = 1;
-      ctx.globalCompositeOperation='source-over';
+      // NOTE: an earlier version tinted this with fillRect over the image's
+      // bounds — which painted a visible coloured RECTANGLE, not a rim light.
+      // Same mistake as the sprite tint bug in v0.45. The art already carries
+      // the hero's colours, so it needs no wash at all.
     } else if(heroSheetReady){
       // fallback until the cut-in art exists: blow up the attack sprite
       const px2 = -240 + slide*(W*0.5 + 240);
