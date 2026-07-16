@@ -52,11 +52,11 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.63</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.64</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
   <div id="ragewrap"><div id="ragebar"></div></div>
 </div>
-<div id="hint">PC: WASD · J 공격 · K 대시(초반=패링) · L 필살기</div>
+<div id="hint">PC: WASD · J 공격 · K 대시(초반=패링) · L 필살기(룬 필요)</div>
 
 <audio id="bgm" loop preload="auto" src="bgm.mp3"></audio>
 <audio id="bgmBoss" loop preload="none" src="bgm_boss.mp3"></audio>
@@ -222,7 +222,7 @@ spBtn.addEventListener('mousedown',()=>trySpecial());
 const player = {
   x:1200, y:900, r:23, spd:5.0, hp:100, maxhp:100,
   lv:1, xp:0, xpNext:8, atkBonus:0,   // growth
-  gold:0, weapon:null, armor:null,   // economy / equipment
+  gold:0, weapon:null, armor:null, relic:null,   // economy / equipment
   rage:0,                            // special meter, filled by parrying
   fx:1, fy:0,               // facing
   fang:0,                   // smoothed facing angle (radians)
@@ -386,6 +386,16 @@ const ITEMS = {
               chest:'#8f96a3', hitFx:'chain' },
   a_plate:  { slot:'armor',  name:'판금 갑옷', hp:80, dr:0.30, cost:340, desc:'최대 HP +80 · 피해 -30%',
               chest:'#d8dde8', hitFx:'plate' },
+  // ---- relics: each grants a DIFFERENT special (필살기) ----
+  // The special used to be free and always the same. Making it an item means
+  // the parry meter has no outlet until you buy one, and which relic you carry
+  // changes how you spend it.
+  r_wave:   { slot:'relic', name:'충격파의 룬', cost:120, sp:'wave',
+              desc:'필살기: 주변 전체 충격파' },
+  r_blink:  { slot:'relic', name:'섬광의 룬',   cost:200, sp:'blink',
+              desc:'필살기: 전방 관통 돌진' },
+  r_storm:  { slot:'relic', name:'폭풍의 룬',   cost:320, sp:'storm',
+              desc:'필살기: 검기 8방향 난사' },
 };
 // Fall back to the rusty blade's look when nothing is equipped.
 function weaponDef(){ return ITEMS[player.weapon] || ITEMS.w_rusty; }
@@ -435,9 +445,9 @@ function recolorTorso(sheet, key, chest){
 }
 // What each shop stocks — later maps sell better gear.
 const SHOP_STOCK = {
-  field: ['w_iron', 'a_leather'],
-  ruins: ['w_flame', 'a_chain'],
-  lair:  ['w_gold', 'a_plate'],
+  field: ['w_iron', 'a_leather', 'r_wave'],
+  ruins: ['w_flame', 'a_chain', 'r_blink'],
+  lair:  ['w_gold', 'a_plate', 'r_storm'],
 };
 function equippedAtk(){ return player.weapon ? ITEMS[player.weapon].atk : 0; }
 function equippedHp(){  return player.armor ? (ITEMS[player.armor].hp||0) : 0; }
@@ -465,21 +475,24 @@ function shopStock(){ return SHOP_STOCK[curMap] || []; }
 function canAfford(id){ return player.gold >= ITEMS[id].cost; }
 function owns(id){
   const it=ITEMS[id];
-  return (it.slot==='weapon' ? player.weapon : player.armor) === id;
+  const cur = it.slot==='weapon' ? player.weapon : it.slot==='armor' ? player.armor : player.relic;
+  return cur === id;
 }
 function buyItem(id){
   const it=ITEMS[id];
   if(owns(id) || !canAfford(id)) return;
   player.gold -= it.cost;
-  if(it.slot==='weapon') player.weapon = id; else player.armor = id;
+  if(it.slot==='weapon') player.weapon = id;
+  else if(it.slot==='armor') player.armor = id;
+  else player.relic = id;
   recalcStats(); saveGame(); SFX.buy();
   popups.push({x:player.x, y:player.y-70, val:it.name, t:60, vy:-0.6, buy:true});
 }
 function sellItem(slot){
-  const cur = slot==='weapon' ? player.weapon : player.armor;
+  const cur = slot==='weapon' ? player.weapon : slot==='armor' ? player.armor : player.relic;
   if(!cur || ITEMS[cur].cost===0) return;      // can't sell starting gear
   player.gold += Math.floor(ITEMS[cur].cost*0.5);   // 50% back
-  if(slot==='weapon') player.weapon=null; else player.armor=null;
+  if(slot==='weapon') player.weapon=null; else if(slot==='armor') player.armor=null; else player.relic=null;
   recalcStats(); saveGame();
 }
 
@@ -567,6 +580,7 @@ const SFX = {
   hurt(){ tone(190, 0.16, 0.30, 'sawtooth', 90); noise(0.10, 700, 0.25); },
   dash(){ noise(0.13, 1500, 0.16, 'bandpass', 500); },
   kill(){ noise(0.20, 500, 0.42, 'lowpass'); tone(110, 0.16, 0.26, 'square', 55); },
+  charge(){ tone(180, 0.30, 0.30, 'sawtooth', 620); },       // winding up
   special(){                                                  // big, layered
     tone(340, 0.5, 0.42, 'sawtooth', 90);
     tone(680, 0.4, 0.24, 'square', 160);
@@ -592,7 +606,7 @@ function saveGame(){
       lv: player.lv, xp: player.xp, xpNext: player.xpNext,
       maxhp: player.maxhp, hp: player.hp,
       atkBonus: player.atkBonus, spd: player.spd,
-      gold: player.gold, weapon: player.weapon, armor: player.armor,
+      gold: player.gold, weapon: player.weapon, armor: player.armor, relic: player.relic,
       cleared: clearedMaps,
       t: Date.now()
     }));
@@ -612,7 +626,7 @@ function applySave(s){
   player.lv=s.lv; player.xp=s.xp; player.xpNext=s.xpNext;
   player.maxhp=s.maxhp; player.hp=s.maxhp;      // start the map at full health
   player.atkBonus=s.atkBonus; player.spd=s.spd;
-  player.gold=s.gold||0; player.weapon=s.weapon||null; player.armor=s.armor||null;
+  player.gold=s.gold||0; player.weapon=s.weapon||null; player.armor=s.armor||null; player.relic=s.relic||null;
   player.maxhp=baseMaxHp()+equippedHp(); player.hp=player.maxhp;
   clearedMaps = s.cleared || [];
 }
@@ -854,7 +868,7 @@ function updateHUD(){
   if(HUD.lv) HUD.lv.textContent = player.lv;
   if(HUD.gold) HUD.gold.textContent = player.gold;
   if(HUD.rage) HUD.rage.style.width = Math.min(100, (player.rage/RAGE_MAX)*100) + '%';
-  if(spBtn) spBtn.classList.toggle('ready', player.rage >= RAGE_MAX);
+  if(spBtn) spBtn.classList.toggle('ready', !!player.relic && player.rage >= RAGE_MAX);
   if(HUD.xpbar) HUD.xpbar.style.width = Math.min(100, (player.xp/player.xpNext)*100) + '%';
 }
 
@@ -1155,7 +1169,7 @@ const COMBO = [
 ];
 // dash attack: long forward thrust, piercing, invulnerable — for punching THROUGH a group
 const DASH_ATK = { total:20, active:14, arc:Math.PI*0.5, range:130, dmg:2, knock:22, hs:6 };
-const DASH_SPD = 15, DASH_TIME = 11, DASH_CD = 22, DASH_IFR = 20;
+const DASH_SPD = 15, DASH_TIME = 14, DASH_CD = 22, DASH_IFR = 22;
 // ---- PARRY ----
 // No new button: the FIRST few frames of a dash are a parry window. Dashing
 // away early is safe (i-frames already covered that); dashing *into* an
@@ -1170,12 +1184,16 @@ const DASH_SPD = 15, DASH_TIME = 11, DASH_CD = 22, DASH_IFR = 20;
 // while leaving both flanks and the back open, so circling is a real answer.
 const SHIELD_ARC = Math.PI*0.9;
 const GUARD_BREAK = 150;          // frames its guard stays down after a parry
-// 6 frames (100ms) proved too tight — even Souls games use 10-15. 12 frames
-// (200ms) still demands a read rather than a mash, but is actually hittable.
-const PARRY_WINDOW = 12;
+// 6 frames (100ms) proved too tight — even Souls games use 10-15. But the
+// window can never exceed DASH_TIME: at PARRY_WINDOW=12 vs DASH_TIME=11 the
+// test `dashT > DASH_TIME - PARRY_WINDOW` became `dashT > -1`, true even when
+// standing still — the player was permanently parrying, i.e. invincible.
+// Lengthen the dash itself so a real 200ms window fits inside it.
+const DASH_TIME_PARRY_SAFE = true;
+const PARRY_WINDOW = 12;     // 200ms, and strictly less than DASH_TIME (14)
+function inParryWindow(){ return player.dashT > 0 && player.dashT > DASH_TIME - PARRY_WINDOW; }
 const PARRY_FREEZE = 22;     // how long a parried enemy is stunned
 let parryFlash = 0;
-function inParryWindow(){ return player.dashT > DASH_TIME - PARRY_WINDOW; }
 function onParry(e){
   SFX.parry();
   parryFlash = 18;
@@ -1210,34 +1228,86 @@ function onParry(e){
 // need to engage with the parry. Making it parry-fed means the special is a
 // reward for reading the fight.
 const RAGE_MAX = 100;
-let specialT = 0;
-function trySpecial(){
-  if(player.rage < RAGE_MAX || specialT>0 || player.atkT>0) return;
-  player.rage = 0;
-  SFX.special();
-  specialT = 34;
-  hitStop = 8;
-  shake = 18;
-  const [ar,ag,ab] = arcRGB();
-  for(const e of enemies){
-    const d = Math.hypot(e.x-player.x, e.y-player.y);
-    if(d < 300 && hasLineOfSight(player.x, player.y, e.x, e.y)){
-      const dmg = 12 + (player.atkBonus + equippedAtk())*3;
-      e.hp -= dmg;
-      e.hitFlash = 10;
-      const a = Math.atan2(e.y-player.y, e.x-player.x);
-      e.knx = Math.cos(a)*26*e.kb; e.kny = Math.sin(a)*26*e.kb;
-      popups.push({x:e.x, y:e.y-e.r-6, val:dmg, t:40, vy:-1.0, big:true});
-      spawnHitFx(e.x, e.y, a, true);
-      if(e.hp<=0){
-        spawnDeathFx(e.x,e.y);
-        gainXP(e.xp||3, e.x, e.y);
-        player.gold += e.gold||1;
-      }
-    }
+let specialT = 0, specialWind = 0, specialKind = null;
+let blinkTrail = 0, blinkFx = 1, blinkFy = 0;
+// A player-owned beam. Reuses the rock pipeline but carries damage and its own
+// look, so the storm relic doesn't just throw pebbles.
+function makeBeam(x,y,vx,vy,dmg){
+  return { x, y, vx, vy, r:8, t:90, dmg, beam:true, spin:Math.atan2(vy,vx), spinV:0,
+           shape:[[0,0]] };
+}
+function relicDef(){ return player.relic ? ITEMS[player.relic] : null; }
+function specialDmg(mult){
+  return Math.round((12 + (player.atkBonus + equippedAtk())*3) * mult);
+}
+function hurtEnemy(e, dmg, ang, knock){
+  e.hp -= dmg; e.hitFlash = 10;
+  e.knx = Math.cos(ang)*knock*e.kb; e.kny = Math.sin(ang)*knock*e.kb;
+  popups.push({x:e.x, y:e.y-e.r-6, val:dmg, t:40, vy:-1.0, big:true});
+  spawnHitFx(e.x, e.y, ang, true);
+  if(e.hp<=0){
+    spawnDeathFx(e.x,e.y);
+    gainXP(e.xp||3, e.x, e.y);
+    player.gold += e.gold||1;
+    SFX.kill();
   }
+}
+// The special now has a WIND-UP instead of firing instantly: the hero plants,
+// the screen holds, then it releases. An instant AoE gave no sense of effort
+// for a meter you spent three parries filling.
+function trySpecial(){
+  const rel = relicDef();
+  if(!rel) return;                       // no relic, no special
+  if(player.rage < RAGE_MAX || specialT>0 || specialWind>0 || player.atkT>0) return;
+  player.rage = 0;
+  specialKind = rel.sp;
+  specialWind = 16;                      // charge-up frames
+  player.vx *= 0.2; player.vy *= 0.2;    // he plants his feet
+  hitStop = 6;
+  SFX.charge();
   updateHUD();
 }
+// Fired once the wind-up completes.
+function releaseSpecial(){
+  const kind = specialKind;
+  SFX.special();
+  specialT = 34;
+  shake = 18;
+  if(kind === 'wave'){
+    // radial shockwave — crowd clear
+    for(const e of enemies){
+      const d = Math.hypot(e.x-player.x, e.y-player.y);
+      if(d < 300 && hasLineOfSight(player.x, player.y, e.x, e.y)){
+        hurtEnemy(e, specialDmg(1.0), Math.atan2(e.y-player.y, e.x-player.x), 26);
+      }
+    }
+  } else if(kind === 'blink'){
+    // piercing dash — huge damage in a line, and it repositions you
+    const fx=player.fx, fy=player.fy;
+    const dist=280;
+    for(const e of enemies){
+      // distance from the enemy to the dash line segment
+      const t = Math.max(0, Math.min(dist, (e.x-player.x)*fx + (e.y-player.y)*fy));
+      const cx = player.x+fx*t, cy = player.y+fy*t;
+      if(Math.hypot(e.x-cx, e.y-cy) < 70){
+        hurtEnemy(e, specialDmg(1.9), Math.atan2(fy,fx), 34);
+      }
+    }
+    const nx = player.x+fx*dist, ny = player.y+fy*dist;
+    const safe = collideWalls(nx, ny, player.r);
+    player.x=safe.x; player.y=safe.y;
+    player.iFr = Math.max(player.iFr, 26);
+    blinkTrail = 20; blinkFx=fx; blinkFy=fy;
+  } else if(kind === 'storm'){
+    // eight sword beams — covers the room, hits what you can't reach
+    for(let i=0;i<8;i++){
+      const a=(i/8)*Math.PI*2 + player.fang*0.2;
+      bullets.push(makeBeam(player.x, player.y, Math.cos(a)*7.4, Math.sin(a)*7.4, specialDmg(0.75)));
+    }
+  }
+  specialKind = null;
+}
+
 // ---- movement feel tuning ----
 const ACCEL = 0.28;      // how fast we reach target speed (higher = snappier)
 const DECEL = 0.22;      // how fast we stop when input released (lower = more glide)
@@ -1386,6 +1456,12 @@ function update(){
   if(player.dashAtkWin>0)player.dashAtkWin--;
   if(player.iFr>0)player.iFr--;
 
+  // special wind-up: hold, then release
+  if(specialWind>0){
+    specialWind--;
+    player.vx *= 0.6; player.vy *= 0.6;     // rooted while charging
+    if(specialWind===0) releaseSpecial();
+  }
   // breathing: slow when healthy, faster/heavier when hurt.
   // Reset toward neutral while moving so he starts a fresh breath on stopping.
   const hpFrac = player.hp/player.maxhp;
@@ -1816,6 +1892,18 @@ function update(){
   for(const b of bullets){
     b.x+=b.vx; b.y+=b.vy; b.t--;
     b.spin += b.spinV;                 // tumble through the air
+    if(b.beam){
+      // player's own sword beams: hurt enemies, ignore the player
+      for(const e of enemies){
+        if(e.hp<=0 || b.t<=0) continue;
+        if(Math.hypot(e.x-b.x, e.y-b.y) < e.r+b.r){
+          hurtEnemy(e, b.dmg, Math.atan2(b.vy,b.vx), 12);
+          b.t=0; break;
+        }
+      }
+      if(b.x<0||b.x>WORLD.w||b.y<0||b.y>WORLD.h||pointInWall(b.x,b.y)) b.t=0;
+      continue;
+    }
     const dx=player.x-b.x, dy=player.y-b.y;
     if(Math.hypot(dx,dy) < b.r+player.r && player.iFr<=0){
       if(inParryWindow()){ onParry(null); b.t=0; }
@@ -2018,6 +2106,19 @@ function draw(){
 
   // enemy projectiles — thrown rocks (tumbling irregular chunks, not orbs)
   for(const b of bullets){
+    if(b.beam){
+      // player's sword beam — a bright shard streaking outward
+      const [br,bg2,bb] = arcRGB();
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.rotate(Math.atan2(b.vy, b.vx));
+      ctx.fillStyle=`rgba(${br},${bg2},${bb},0.85)`;
+      ctx.fillRect(-16, -3, 32, 6);
+      ctx.fillStyle='rgba(255,255,255,0.9)';
+      ctx.fillRect(-10, -1.5, 22, 3);
+      ctx.restore();
+      continue;
+    }
     ctx.save();
     ctx.translate(b.x, b.y);
     ctx.rotate(b.spin || 0);
@@ -2234,7 +2335,13 @@ function draw(){
       yOff = -Math.abs(Math.sin(player.walkT*(Math.PI/5))) * 2.0;
     }
 
-    if(state==='attack' && atkSheetReady){
+    // Hold the strike pose while charging the special — it reads as "he's
+    // gathering for something" rather than idling with a ring around him.
+    if(specialWind>0 && atkSheetReady){
+      const [pr,pg2,pb] = arcRGB();
+      drawSwing(player.x, player.y + Math.sin(specialWind*0.9)*1.5, 138, dir, 0,
+                `rgb(${pr},${pg2},${pb})`);
+    } else if(state==='attack' && atkSheetReady){
       // map swing progress -> frame. atkT counts DOWN from sw.total to 0.
       const sw = player.sw || COMBO[player.combo];
       const p = 1 - (player.atkT / sw.total);   // 0 (start) .. 1 (end)
@@ -2283,6 +2390,40 @@ function draw(){
     ctx.lineWidth=5*(1-t)+1;
     ctx.beginPath(); ctx.arc(player.x, player.y, 26+t*54, 0, Math.PI*2); ctx.stroke();
     parryFlash--;
+  }
+  // special wind-up: energy gathering in, telegraphing the release
+  if(specialWind>0){
+    const t = 1 - specialWind/16;
+    const [cr,cg,cb] = arcRGB();
+    ctx.strokeStyle=`rgba(${cr},${cg},${cb},${0.35+0.5*t})`;
+    ctx.lineWidth=3;
+    ctx.beginPath(); ctx.arc(player.x, player.y, 150*(1-t)+26, 0, Math.PI*2); ctx.stroke();
+    for(let i=0;i<6;i++){
+      const a=(i/6)*Math.PI*2 + t*5;
+      const rr=150*(1-t)+26;
+      ctx.fillStyle=`rgba(255,255,255,${0.5+0.5*t})`;
+      ctx.fillRect(player.x+Math.cos(a)*rr-2, player.y+Math.sin(a)*rr-2, 4, 4);
+    }
+    ctx.fillStyle=`rgba(255,255,255,${0.18*t})`;
+    ctx.beginPath(); ctx.arc(player.x, player.y, 30*t, 0, Math.PI*2); ctx.fill();
+  }
+  // blink relic: afterimage streak along the dash line
+  if(blinkTrail>0){
+    const t = blinkTrail/20;
+    const [br,bg,bb2] = arcRGB();
+    ctx.strokeStyle=`rgba(${br},${bg},${bb2},${t*0.8})`;
+    ctx.lineWidth=26*t;
+    ctx.lineCap='round';
+    ctx.beginPath();
+    ctx.moveTo(player.x-blinkFx*280, player.y-blinkFy*280);
+    ctx.lineTo(player.x, player.y);
+    ctx.stroke();
+    ctx.strokeStyle=`rgba(255,255,255,${t*0.5})`; ctx.lineWidth=8*t;
+    ctx.beginPath();
+    ctx.moveTo(player.x-blinkFx*280, player.y-blinkFy*280);
+    ctx.lineTo(player.x, player.y);
+    ctx.stroke();
+    blinkTrail--;
   }
   // special: expanding blade-coloured shockwave
   if(specialT>0){
@@ -2421,8 +2562,13 @@ function draw(){
       ctx.textAlign='left';
       ctx.fillStyle = have?'#9fe6b5':(afford?'#cfe6ff':'#77777f');
       ctx.font='bold 16px system-ui';
-      const nameX = it.slot==='weapon' ? x+30 : x+14;
-      if(it.slot==='weapon'){
+      const nameX = (it.slot==='weapon'||it.slot==='relic') ? x+30 : x+14;
+      if(it.slot==='relic'){
+        ctx.fillStyle = '#ff8a4d';
+        ctx.beginPath(); ctx.arc(x+19, y+21, 7, 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle='rgba(0,0,0,.5)'; ctx.lineWidth=1; ctx.stroke();
+        ctx.fillStyle = have?'#9fe6b5':(afford?'#cfe6ff':'#77777f');
+      } else if(it.slot==='weapon'){
         // little blade swatch so the colour is visible before buying
         ctx.fillStyle = it.blade;
         ctx.fillRect(x+14, y+13, 5, 16);
@@ -2450,11 +2596,12 @@ function draw(){
     ctx.textAlign='center'; ctx.fillStyle='#8fa3c0'; ctx.font='12px system-ui';
     const eqW = player.weapon?ITEMS[player.weapon].name:'없음';
     const eqA = player.armor?ITEMS[player.armor].name:'없음';
-    ctx.fillText(`장착  무기: ${eqW}   방어구: ${eqA}`, W/2, y+18);
+    const eqR = player.relic?ITEMS[player.relic].name:'없음';
+    ctx.fillText(`무기: ${eqW}   방어구: ${eqA}   룬: ${eqR}`, W/2, y+18);
     let sy=y+30;
-    for(const [slot,cur,label] of [['weapon',player.weapon,'무기'],['armor',player.armor,'방어구']]){
+    for(const [slot,cur,label] of [['weapon',player.weapon,'무기'],['armor',player.armor,'방어구'],['relic',player.relic,'룬']]){
       if(cur && ITEMS[cur].cost>0){
-        const bw=140, bx=(W-bw)/2 + (slot==='weapon'?-76:76);
+        const bw=118, bx=(W-bw)/2 + (slot==='weapon'?-124:slot==='armor'?0:124);
         ctx.fillStyle='#3a2a2a'; ctx.fillRect(bx,sy,bw,30);
         ctx.strokeStyle='#c98a6e'; ctx.lineWidth=1.5; ctx.strokeRect(bx,sy,bw,30);
         ctx.fillStyle='#e6b8a0'; ctx.font='12px system-ui';
@@ -2514,7 +2661,7 @@ function drawTitle(){
   titleBtns.newg = {x:bx,y:ny,w:bw,h:bh};
 
   ctx.fillStyle='#54637a'; ctx.font='11px system-ui';
-  ctx.fillText('PC: WASD · J 공격 · K 대시(초반=패링) · L 필살기', W/2, H-24);
+  ctx.fillText('PC: WASD · J 공격 · K 대시(초반=패링) · L 필살기(룬 필요)', W/2, H-24);
   ctx.textAlign='left';
 }
 
@@ -2555,7 +2702,7 @@ function startNewGame(){
   clearSave();
   player.lv=1; player.xp=0; player.xpNext=8;
   player.maxhp=100; player.hp=100; player.atkBonus=0; player.spd=5.0;
-  player.gold=0; player.weapon=null; player.armor=null; player.rage=0;
+  player.gold=0; player.weapon=null; player.armor=null; player.relic=null; player.rage=0;
   clearedMaps=[]; runDeaths=0; runStart=Date.now(); bossCleared=false;
   gameState='playing';
   loadMap('field', 140, MAPS.field.h/2);
