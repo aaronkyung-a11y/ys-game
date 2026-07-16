@@ -52,7 +52,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.79</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.80</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
   <div id="ragewrap"><div id="ragebar"></div></div>
 </div>
@@ -259,7 +259,7 @@ const MAPS = {
     name: '들판',
     w: 2400, h: 1800,
     plan: { grunt:10, charger:4, shooter:4, shield:3 },
-    townDoor: { x:2090, y:840, w:88, h:120 },
+    townDoor: { x:60, y:1560, w:88, h:120 },      // far corner, opposite the gate
     gate: { x:2280, y:840, w:96, h:120, to:'ruins', label:'유적으로' },
     walls: [
       {x:360, y:300, w:260, h:40}, {x:360, y:300, w:40, h:240},
@@ -278,7 +278,7 @@ const MAPS = {
     name: '무너진 유적',
     w: 2000, h: 1600,
     plan: { grunt:6, charger:6, shooter:6, shield:5 },   // harder mix
-    townDoor: { x:1690, y:740, w:88, h:120 },
+    townDoor: { x:60, y:1340, w:88, h:120 },      // far corner, opposite the gate
     gate: { x:1880, y:740, w:96, h:120, to:'crypt', label:'묘지로' },
     walls: [
       {x:300, y:260, w:40, h:420}, {x:300, y:260, w:420, h:40},
@@ -292,7 +292,7 @@ const MAPS = {
     ]
   },
   town: {
-    name: '마지막 마을',
+    name: '마을',
     w: 1500, h: 1000,
     plan: {},                     // safe. the only map with no enemies at all.
     town: true,
@@ -312,7 +312,7 @@ const MAPS = {
     name: '지하 묘지',
     w: 1800, h: 1400,
     plan: { grunt:5, shield:6, shooter:4, dead:11 },   // her knights are down here
-    townDoor: { x:1490, y:640, w:88, h:120 },
+    townDoor: { x:60, y:1180, w:88, h:120 },      // far corner, opposite the gate
     gate: { x:1680, y:640, w:96, h:120, to:'lair', label:'둥지로' },
     walls: [
       // narrow aisles between the tombs
@@ -2201,7 +2201,10 @@ function update(){
     const back = townReturn || 'field';
     SFX.gate();
     const d = MAPS[back].townDoor;
-    loadMap(back, d ? d.x-90 : 140, d ? d.y+d.h/2 : MAPS[back].h/2);
+    // step out to the side of the door, inside the map — `d.x-90` put them at
+    // x=-30 (off-world), collision pushed them back onto the door, and they
+    // bounced straight into town again.
+    loadMap(back, d ? d.x + d.w + 90 : 140, d ? d.y + d.h/2 : MAPS[back].h/2);
     // returning to a cleared map: the gate is already open
     gateOpen = true;
     return;
