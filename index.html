@@ -52,7 +52,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.64</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.65</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
   <div id="ragewrap"><div id="ragebar"></div></div>
 </div>
@@ -1096,7 +1096,7 @@ function makeEnemy(kind, x, y){
   const t = ETYPE[kind];
   return {
     kind, x, y, r:t.r, spd:t.spd, hp:t.hp, maxhp:t.hp, color:t.color, touch:t.touch, xp:t.xp, gold:t.gold||1, kb:(t.kb!==undefined?t.kb:1),
-    knx:0, kny:0, hitFlash:0, atkCd:0, stunT:0, blockT:0, detourDir:0, commit:0, guardT:0, blockFlash:0, wind:0,
+    knx:0, kny:0, hitFlash:0, atkCd:0, stunT:0, blockT:0, detourDir:0, commit:0, guardT:0, blockFlash:0, wind:0, _parried:false,
     state: kind==='shooter'?'cool':(kind==='shield'?'guard':'approach'), stateT: kind==='shooter'?60:(kind==='shield'?60:0),
     chgVx:0, chgVy:0, aimX:0, aimY:0, chain:0,
     // --- per-enemy personality so identical types don't move identically ---
@@ -1374,6 +1374,7 @@ function tryDash(){
     player.fang = Math.atan2(player.fy, player.fx);
   }
   SFX.dash();
+  enemies.forEach(e=>e._parried=false);   // fresh parry chance each dash
   player.dashT = DASH_TIME; player.dashCd = DASH_TIME + DASH_CD; player.iFr = DASH_IFR;
   player.dashAtkWin = DASH_TIME + 22; // stays open ~22 frames after dash ends
 }
@@ -1817,13 +1818,18 @@ function update(){
         }
       }
 
+      // Parry is checked BEFORE the i-frame gate. Dashing grants iFr, and the
+      // parry window lives inside the dash — so with the check nested under
+      // `iFr<=0` the parry could never fire at all. It was unreachable from the
+      // day it shipped; the tests only ever called onParry() directly.
+      if(d < e.r+player.r+6 && e.atkCd<=0 && inParryWindow() && !e._parried){
+        e._parried = true;
+        onParry(e); e.atkCd=30;
+      }
       // contact damage (all types)
-      if(d < e.r+player.r+2 && player.iFr<=0 && e.atkCd<=0){
-        if(inParryWindow()){ onParry(e); e.atkCd=30; }
-        else {
-          player.hp -= Math.max(1, Math.round(e.touch*(1-damageReduction()))); player.hitFlash=10; player.iFr=20; e.atkCd=30;
-          spawnPlayerHitFx(); updateHUD();
-        }
+      else if(d < e.r+player.r+2 && player.iFr<=0 && e.atkCd<=0){
+        player.hp -= Math.max(1, Math.round(e.touch*(1-damageReduction()))); player.hitFlash=10; player.iFr=20; e.atkCd=30;
+        spawnPlayerHitFx(); updateHUD();
         if(e.kind==='charger'&&e.state==='charge'){ e.state='rest'; e.stateT=25; }
         if(player.hp<=0) respawn();
       }
@@ -1905,9 +1911,12 @@ function update(){
       continue;
     }
     const dx=player.x-b.x, dy=player.y-b.y;
-    if(Math.hypot(dx,dy) < b.r+player.r && player.iFr<=0){
-      if(inParryWindow()){ onParry(null); b.t=0; }
-      else { player.hp-=Math.max(1, Math.round(8*(1-damageReduction()))); player.hitFlash=10; player.iFr=20; spawnPlayerHitFx(); }
+    // same fix as contact damage: parry must be tested outside the iFr gate
+    if(Math.hypot(dx,dy) < b.r+player.r+6 && inParryWindow()){
+      onParry(null); b.t=0;
+    }
+    else if(Math.hypot(dx,dy) < b.r+player.r && player.iFr<=0){
+      player.hp-=Math.max(1, Math.round(8*(1-damageReduction()))); player.hitFlash=10; player.iFr=20; spawnPlayerHitFx();
       updateHUD(); b.t=0;
       if(player.hp<=0) respawn();
     }
