@@ -52,7 +52,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.70</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.71</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
   <div id="ragewrap"><div id="ragebar"></div></div>
 </div>
@@ -243,6 +243,18 @@ let enemies = [], effects = [], bullets = [], orbs = [], popups = [], kills = 0,
 // Each map defines its own size, walls, spawn plan, and where its exit gate
 // leads. Clearing a map's enemies opens the gate to the next one.
 const MAPS = {
+  sanctum: {
+    name: '무너진 성소',
+    w: 1400, h: 1100,
+    plan: { grunt:4 },              // barely anything — this is the waking room
+    gate: { x:1290, y:490, w:96, h:120, to:'field', label:'들판으로' },
+    walls: [
+      {x:300, y:260, w:40, h:300}, {x:1060, y:260, w:40, h:300},
+      {x:300, y:260, w:200, h:40}, {x:900, y:260, w:200, h:40},
+      {x:620, y:620, w:160, h:40},
+      {x:420, y:820, w:70, h:70}, {x:910, y:820, w:70, h:70},
+    ]
+  },
   field: {
     name: '들판',
     w: 2400, h: 1800,
@@ -265,7 +277,7 @@ const MAPS = {
     name: '무너진 유적',
     w: 2000, h: 1600,
     plan: { grunt:6, charger:6, shooter:6, shield:5 },   // harder mix
-    gate: { x:1880, y:740, w:96, h:120, to:'lair', label:'둥지로' },
+    gate: { x:1880, y:740, w:96, h:120, to:'crypt', label:'묘지로' },
     walls: [
       {x:300, y:260, w:40, h:420}, {x:300, y:260, w:420, h:40},
       {x:1300, y:260, w:40, h:420}, {x:940, y:260, w:400, h:40},
@@ -277,16 +289,44 @@ const MAPS = {
       {x:850, y:480, w:70, h:70}, {x:850, y:1250, w:70, h:70},
     ]
   },
+  crypt: {
+    name: '지하 묘지',
+    w: 1800, h: 1400,
+    plan: { grunt:7, shield:6, shooter:5 },   // tight corridors: shields matter
+    gate: { x:1680, y:640, w:96, h:120, to:'lair', label:'둥지로' },
+    walls: [
+      // narrow aisles between the tombs
+      {x:260, y:200, w:40, h:420}, {x:520, y:200, w:40, h:420},
+      {x:780, y:200, w:40, h:420}, {x:1040, y:200, w:40, h:420},
+      {x:1300, y:200, w:40, h:420},
+      {x:260, y:820, w:40, h:400}, {x:520, y:820, w:40, h:400},
+      {x:780, y:820, w:40, h:400}, {x:1040, y:820, w:40, h:400},
+      {x:1300, y:820, w:40, h:400},
+      {x:1520, y:300, w:70, h:70}, {x:1520, y:1000, w:70, h:70},
+    ]
+  },
   lair: {
     name: '오크 군주의 둥지',
     w: 1600, h: 1300,
     plan: {},                 // no trash — the boss is the encounter
     boss: true,
-    gate: { x:1480, y:590, w:96, h:120, to:'hall', label:'황금 홀로' },
+    gate: { x:1480, y:590, w:96, h:120, to:'corridor', label:'회랑으로' },
     walls: [
       // open arena: only corner pillars, nowhere to hide for long
       {x:260, y:240, w:80, h:80}, {x:1260, y:240, w:80, h:80},
       {x:260, y:980, w:80, h:80}, {x:1260, y:980, w:80, h:80},
+    ]
+  },
+  corridor: {
+    name: '봉인의 회랑',
+    w: 2000, h: 700,
+    plan: {},                        // no enemies. just the walk, and the silence.
+    gate: { x:1880, y:290, w:96, h:120, to:'hall', label:'홀로' },
+    walls: [
+      {x:0, y:0, w:2000, h:180}, {x:0, y:520, w:2000, h:180},
+      {x:400, y:180, w:40, h:70}, {x:400, y:450, w:40, h:70},
+      {x:900, y:180, w:40, h:70}, {x:900, y:450, w:40, h:70},
+      {x:1400, y:180, w:40, h:70}, {x:1400, y:450, w:40, h:70},
     ]
   },
   hall: {
@@ -325,6 +365,24 @@ const THEMES = {
     floor:'#2b2620', floorAlt:'#332d24', grout:'#1c1813',
     wallTop:'#8a6f3a', wallFace:'#5c4a28', wallEdge:'#2a2214',
     speck:'#6b5730', tile:60
+  },
+  // pale, bleached stone — where he wakes up
+  sanctum: {
+    floor:'#2f3138', floorAlt:'#373a42', grout:'#212329',
+    wallTop:'#6b7183', wallFace:'#474c5a', wallEdge:'#262a33',
+    speck:'#565c6b', tile:52
+  },
+  // cold and close: tombs
+  crypt: {
+    floor:'#22252b', floorAlt:'#282c33', grout:'#171920',
+    wallTop:'#4a5266', wallFace:'#333947', wallEdge:'#1b1e26',
+    speck:'#3d4354', tile:48
+  },
+  // the walk before the end — gold bleeding into the stone
+  corridor: {
+    floor:'#2a2822', floorAlt:'#312e26', grout:'#1b1a15',
+    wallTop:'#7a6636', wallFace:'#4e4224', wallEdge:'#252012',
+    speck:'#5e5029', tile:64
   }
 };
 function theme(){ return THEMES[curMap] || THEMES.field; }
@@ -459,6 +517,133 @@ function recalcStats(){
   player.hp = Math.min(player.maxhp, Math.max(1, Math.round(player.maxhp*hpFrac)));
   updateHUD();
 }
+
+// ---- DIALOGUE ----
+// Story text is delivered as a small panel at the bottom. It pauses play (so a
+// grunt can't chew on you while you read) but is always skippable — nobody
+// should be trapped in a cutscene on the fifth attempt at a map.
+let dlgLines = [], dlgIdx = 0, dlgChar = 0, dlgTimer = 0, dlgActive = false;
+const DLG_SPEED = 1.6;          // characters revealed per frame
+function say(lines){
+  dlgLines = lines; dlgIdx = 0; dlgChar = 0; dlgActive = true;
+  setUIVisible(false);
+}
+function dlgAdvance(){
+  if(!dlgActive) return;
+  const full = dlgLines[dlgIdx].text;
+  if(dlgChar < full.length){ dlgChar = full.length; return; }   // first tap: reveal all
+  dlgIdx++;
+  dlgChar = 0;
+  if(dlgIdx >= dlgLines.length){
+    dlgActive = false;
+    if(gameState==='playing') setUIVisible(true);
+  }
+}
+function drawDialogue(){
+  if(!dlgActive) return;
+  const line = dlgLines[dlgIdx];
+  dlgChar = Math.min(line.text.length, dlgChar + DLG_SPEED);
+  const shown = line.text.slice(0, Math.floor(dlgChar));
+
+  const bh = 118, by = H - bh - 14, bx = 24, bw = W - 48;
+  ctx.fillStyle = 'rgba(6,8,14,.92)';
+  ctx.fillRect(bx, by, bw, bh);
+  ctx.strokeStyle = line.who === '기사' ? '#e8c86a' : '#4a5a72';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(bx, by, bw, bh);
+
+  if(line.who){
+    ctx.fillStyle = line.who === '기사' ? '#e8c86a' : '#8fa3c0';
+    ctx.font = 'bold 14px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText(line.who, bx + 18, by + 26);
+  }
+  ctx.fillStyle = '#dbe6f5';
+  ctx.font = '15px system-ui';
+  ctx.textAlign = 'left';
+  // wrap by measured width so long Korean lines don't overflow
+  const maxW = bw - 36;
+  let y = by + (line.who ? 54 : 40);
+  let cur = '';
+  for(const ch of shown){
+    if(ctx.measureText(cur + ch).width > maxW){
+      ctx.fillText(cur, bx + 18, y); y += 22; cur = ch;
+    } else cur += ch;
+  }
+  ctx.fillText(cur, bx + 18, y);
+
+  if(dlgChar >= line.text.length){
+    const blink = Math.sin(Date.now()*0.006) > 0;
+    ctx.fillStyle = blink ? 'rgba(255,211,110,.9)' : 'rgba(255,211,110,.3)';
+    ctx.font = '12px system-ui'; ctx.textAlign = 'right';
+    ctx.fillText('탭하여 계속 ▸', bx + bw - 18, by + bh - 14);
+  }
+  ctx.textAlign = 'left';
+}
+
+// ---- STORY ----
+// Told almost entirely by the Knight. The hero never speaks — he has no memory
+// to speak from, and his silence is the point. Her lines are written so they
+// read one way on the first pass and another way after the reveal: she is
+// never lying, she is just answering a question he hasn't asked yet.
+const STORY = {
+  sanctum: [
+    { who:null,   text:'…얼마나 잠들어 있었는지 알 수 없다.' },
+    { who:null,   text:'이름도, 여기 온 이유도 떠오르지 않는다. 손에 검이 쥐여 있다는 것만이 확실하다.' },
+    { who:'기사', text:'일어났구나.' },
+    { who:'기사', text:'놀라지 마라. 나는 멀리 있다. 목소리만 닿을 뿐이야.' },
+    { who:'기사', text:'네가 누구인지 묻지 않겠다. 지금은 그게 중요하지 않으니.' },
+    { who:'기사', text:'동쪽으로 가라. 길을 열어두었다.' },
+  ],
+  field: [
+    { who:'기사', text:'이 들판은 한때 밀밭이었다. 믿기 어렵겠지만.' },
+    { who:'기사', text:'룬을 하나 남겨두었다. 상인에게 가면 받을 수 있을 것이다.' },
+    { who:'기사', text:'…네 몸은 검을 기억하는군. 좋은 일이다.' },
+  ],
+  ruins: [
+    { who:null,   text:'무너진 벽에 문양이 새겨져 있다. 읽을 수 없지만, 어딘가 낯익다.' },
+    { who:'기사', text:'그건 봉인의 문양이다. 왕국이 무너지던 밤에 세웠지.' },
+    { who:'기사', text:'대가는 있었다. 나는 이곳을 떠날 수 없게 되었다.' },
+    { who:'기사', text:'아래로 내려가라. 묘지를 지나야 그것에 닿을 수 있다.' },
+  ],
+  crypt: [
+    { who:null,   text:'공기가 무겁다. 벽을 따라 관들이 늘어서 있다.' },
+    { who:'기사', text:'내 기사들이다. 마지막까지 나와 함께 섰던.' },
+    { who:'기사', text:'…미안하다. 이런 곳을 지나게 해서.' },
+    { who:'기사', text:'조금만 더 가면 된다. 오크 군주가 그 아래에 있다.' },
+    { who:'기사', text:'그것만 쓰러뜨리면… 모든 게 끝난다.' },
+  ],
+  lair: [
+    { who:'기사', text:'저것이다.' },
+    { who:'기사', text:'오랫동안 저것을 죽여줄 자를 기다렸다.' },
+    { who:'기사', text:'부탁한다.' },
+  ],
+  corridor: [
+    { who:null,   text:'오크 군주가 쓰러졌다. 아무 소리도 나지 않는다.' },
+    { who:null,   text:'회랑 끝에, 처음으로 그녀의 모습이 보인다. 황금 갑옷.' },
+    { who:'기사', text:'…고맙다. 진심이다.' },
+    { who:'기사', text:'저것은 자물쇠였다. 무언가를 가두는.' },
+    { who:'기사', text:'네가 그걸 부숴주었다.' },
+    { who:null,   text:'그녀가 걸음을 멈춘다. 등을 돌린 채.' },
+    { who:'기사', text:'봉인이 가둔 건 오크 군주가 아니었다.' },
+  ],
+  hall: [
+    { who:'기사', text:'네가 왜 기억을 잃었는지 궁금하지 않았나.' },
+    { who:'기사', text:'봉인의 대가다. 너에게도, 나에게도.' },
+    { who:null,   text:'그녀가 검을 뽑는다.' },
+    { who:'기사', text:'처음부터 알고 있었다. 네가 무엇인지.' },
+    { who:'기사', text:'미안하다. 이번엔 더 오래 버틸 줄 알았는데.' },
+  ],
+  ending: [
+    { who:null,   text:'황금 기사가 무릎을 꿇는다.' },
+    { who:'기사', text:'…역시, 안 되는구나.' },
+    { who:'기사', text:'다음에는… 조금 더 일찍 너를 찾아야겠다.' },
+    { who:null,   text:'그녀의 갑옷에서 빛이 흩어진다.' },
+    { who:null,   text:'검을 쥔 손이 떨린다. 무언가 기억날 것 같지만, 잡히지 않는다.' },
+    { who:null,   text:'문이 열린다. 밖으로 나가는 길이다.' },
+  ],
+};
+let storySeen = {};        // don't repeat a map's lines on a retry
 
 // ---- SHOP ----
 // A temporary merchant standing near each map's gate. This is scaffolding —
@@ -607,7 +792,7 @@ function saveGame(){
       maxhp: player.maxhp, hp: player.hp,
       atkBonus: player.atkBonus, spd: player.spd,
       gold: player.gold, weapon: player.weapon, armor: player.armor, relic: player.relic,
-      cleared: clearedMaps,
+      cleared: clearedMaps, seen: storySeen,
       t: Date.now()
     }));
   }catch(e){}
@@ -629,11 +814,12 @@ function applySave(s){
   player.gold=s.gold||0; player.weapon=s.weapon||null; player.armor=s.armor||null; player.relic=s.relic||null;
   player.maxhp=baseMaxHp()+equippedHp(); player.hp=player.maxhp;
   clearedMaps = s.cleared || [];
+  storySeen = s.seen || {};
 }
 let clearedMaps = [];
 
-let curMap = 'field';
-const WORLD = { w:MAPS.field.w, h:MAPS.field.h };
+let curMap = 'sanctum';
+const WORLD = { w:MAPS.sanctum.w, h:MAPS.sanctum.h };
 const cam = { x:0, y:0 };
 function updateCamera(){
   cam.x = player.x - W/2;
@@ -1151,6 +1337,11 @@ function loadMap(name, entryX, entryY){
   updateCamera();
   updateHUD();
   saveGame();          // autosave at every map transition
+  // story beat for this map, once per run — retries shouldn't replay it
+  if(STORY[name] && !storySeen[name]){
+    storySeen[name] = true;
+    say(STORY[name]);
+  }
 }
 function gateRect(){ return MAPS[curMap].gate; }
 buildWalls();
@@ -1403,6 +1594,7 @@ function update(){
   if(il>1){ ix/=il; iy/=il; }
   player._moving = il>0.1;
 
+  if(dlgActive) return;
   if(keys['j']) atkQueued=true;
   if(keys['k']) dashQueued=true;
   if(keys['l']) trySpecial();
@@ -1616,7 +1808,11 @@ function update(){
     mapBanner = 120;
     clearStats = { lv: player.lv, time: Math.floor((Date.now()-runStart)/1000), deaths: runDeaths };
     clearSave();                       // run complete — no half-finished save
-    setTimeout(()=>{ gameState='cleared'; setUIVisible(false); }, 1800);
+    say(STORY.ending);
+    // wait for the ending lines to be read rather than cutting them off
+    const waitEnd = setInterval(()=>{
+      if(!dlgActive){ clearInterval(waitEnd); gameState='cleared'; setUIVisible(false); }
+    }, 200);
   }
   for(const e of enemies){
     if(e.stunT>0){ e.stunT--; e.hitFlash=Math.max(e.hitFlash,2); continue; }
@@ -2729,8 +2925,9 @@ function loop(){
   if(cutIn>0){
     cutIn--;
     if(cutIn===0) releaseSpecial();
-  } else if(gameState==='playing' && !shopOpen) update();
+  } else if(gameState==='playing' && !shopOpen && !dlgActive) update();
   draw();
+  if(dlgActive) drawDialogue();
   if(gameState==='title') drawTitle();
   else if(gameState==='cleared') drawClear();
   requestAnimationFrame(loop);
@@ -2811,7 +3008,8 @@ function startNewGame(){
   player.gold=0; player.weapon=null; player.armor=null; player.relic=null; player.rage=0;
   clearedMaps=[]; runDeaths=0; runStart=Date.now(); bossCleared=false;
   gameState='playing';
-  loadMap('field', 140, MAPS.field.h/2);
+  storySeen = {};
+  loadMap('sanctum', 140, MAPS.sanctum.h/2);
 }
 function continueGame(){
   setUIVisible(true);
@@ -2824,6 +3022,7 @@ function continueGame(){
 }
 // menu clicks — screen space, so read the raw canvas coords
 cv.addEventListener('pointerdown', e=>{
+  if(dlgActive){ dlgAdvance(); return; }
   const r=cv.getBoundingClientRect();
   const x=(e.clientX-r.left)*(W/r.width), y=(e.clientY-r.top)*(H/r.height);
   const hit=(b)=> b && x>=b.x && x<=b.x+b.w && y>=b.y && y<=b.y+b.h;
