@@ -52,7 +52,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.77</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.78</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
   <div id="ragewrap"><div id="ragebar"></div></div>
 </div>
@@ -311,7 +311,7 @@ const MAPS = {
   crypt: {
     name: '지하 묘지',
     w: 1800, h: 1400,
-    plan: { grunt:4, shield:4, shooter:3, dead:6 },   // her knights are down here
+    plan: { grunt:5, shield:6, shooter:4, dead:11 },   // her knights are down here
     townDoor: { x:1490, y:640, w:88, h:120 },
     gate: { x:1680, y:640, w:96, h:120, to:'lair', label:'둥지로' },
     walls: [
@@ -548,7 +548,7 @@ function makeAlly(x, y){
   return {
     x, y, r:30, spd:3.6, hp:ALLY_MAX, maxhp:ALLY_MAX,
     face:'down', walkT:0, px:x, py:y,
-    state:'follow', stateT:0, atkT:0, atkCd:0, target:null,
+    state:'follow', stateT:0, atkT:0, atkCd:0, target:null, moving:false, breath:0,
     hitFlash:0, iFr:0, down:false, downT:0,
     scripted:false,        // when true the story drives her, not the AI
   };
@@ -574,8 +574,9 @@ function updateAlly(){
   if(ally.scripted){
     // walks steadily toward the far gate, always ahead of you, never looking back
     moveWithSlide(ally, ally.spd, 0);
-    ally.walkT += ally.spd*0.5;
+    ally.walkT += ally.spd*0.55;
     ally.face = 'right';
+    ally.moving = true;
     // never let him catch up — she stays out of reach the whole corridor
     if(ally.x < player.x + 200) ally.x = player.x + 200;
     return;
@@ -619,9 +620,12 @@ function updateAlly(){
     const fd=Math.hypot(foe.x-ally.x, foe.y-ally.y)||1;
     ally.face = dir4(foe.x-ally.x, foe.y-ally.y);
     if(fd > 70){
+      const bx=ally.x, by=ally.y;
       moveWithSlide(ally, (foe.x-ally.x)/fd*ally.spd, (foe.y-ally.y)/fd*ally.spd);
-      ally.walkT += ally.spd*0.5;
+      ally.walkT += Math.hypot(ally.x-bx, ally.y-by)*0.55;
+      ally.moving = true;
     } else if(ally.atkCd<=0){
+      ally.moving = false;
       ally.atkT=18; ally.atkCd=34;
       SFX.swing();
     }
@@ -629,11 +633,19 @@ function updateAlly(){
     // follow, but don't crowd him
     ally.target=null;
     if(pd > 150){
+      const bx=ally.x, by=ally.y;
       moveWithSlide(ally, pdx/pd*ally.spd, pdy/pd*ally.spd);
-      ally.walkT += ally.spd*0.5;
-      ally.face = dir4(pdx, pdy);
+      // Face the direction she actually MOVED. Facing the player while
+      // trailing him meant she walked backwards the whole game.
+      const mvx=ally.x-bx, mvy=ally.y-by;
+      if(Math.hypot(mvx,mvy) > 0.3){
+        ally.face = dir4(mvx, mvy);
+        ally.walkT += Math.hypot(mvx,mvy)*0.55;   // animate by distance, like everyone else
+        ally.moving = true;
+      } else ally.moving = false;
     } else {
-      ally.face = dir4(pdx, pdy);
+      ally.face = dir4(pdx, pdy);    // standing at his side: look at him
+      ally.moving = false;
     }
   }
   ally.px=ally.x; ally.py=ally.y;
@@ -651,7 +663,19 @@ function hurtAlly(dmg){
 function drawAlly(){
   if(!ally || !kniSheetReady) return;
   const striking = ally.atkT>0;
-  const row = striking ? 2 : (Math.floor(ally.walkT/7)%2);
+  // Her sheet only has idleA/idleB/attack — no true walk cycle. Alternate the
+  // two stances while moving (a visible weight shift beats a frozen slide) and
+  // hold one with a slow breath when standing.
+  let row, bob=0;
+  if(striking) row = 2;
+  else if(ally.moving){
+    row = Math.floor(ally.walkT/5) % 2;
+    bob = -Math.abs(Math.sin(ally.walkT*(Math.PI/5))) * 2.4;
+  } else {
+    ally.breath += 0.05;
+    row = 0;
+    bob = Math.sin(ally.breath) * 1.4;
+  }
   let tint=null;
   if(ally.hitFlash>0) tint='#ffffff';
   if(ally.down){
@@ -662,7 +686,7 @@ function drawAlly(){
     ctx.restore();
     return;
   }
-  drawKnight(ally.x, ally.y, 168, ally.face, row, tint);
+  drawKnight(ally.x, ally.y + bob, 168, ally.face, row, tint);
   // her health, above her head — the player needs to see her losing
   if(ally.hp < ally.maxhp){
     const bw=54, bx=ally.x-bw/2, by=ally.y-58;
@@ -1600,7 +1624,7 @@ const ETYPE = {
   grunt:   { r:22, spd:2.0, hp:6, color:'#e05a5a', touch:6,  xp:3,   gold:9,  kb:1.0 },  // basic chaser
   charger: { r:26, spd:1.1, hp:11, color:'#e0913a', touch:10, xp:6,   gold:22, kb:0.55 }, // slow, then lunges
   shooter: { r:22, spd:1.5, hp:4, color:'#9a5ae0', touch:5,  xp:5,   gold:17, kb:1.0 },  // keeps distance, fires
-  dead:    { r:26, spd:1.6, hp:16, color:'#7d8a72', touch:12, xp:10, gold:24, kb:0.5 },  // her old knights
+  dead:    { r:26, spd:2.4, hp:34, color:'#7d8a72', touch:16, xp:14, gold:30, kb:0.35 },  // her old knights
   shield:  { r:24, spd:1.4, hp:13, color:'#6a8fb0', touch:8,  xp:8,   gold:26, kb:0.3 },  // guards its front — parry or flank it
   boss:    { r:52, spd:1.3, hp:330, color:'#c94f4f', touch:18, xp:120, gold:280, kb:0 },  // orc lord — immovable
   knight:  { r:34, spd:4.2, hp:380, color:'#e8c86a', touch:20, xp:200, gold:400, kb:0.2 }, // golden knight — light but braced
