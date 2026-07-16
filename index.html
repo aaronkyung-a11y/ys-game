@@ -52,7 +52,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.66</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.67</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
   <div id="ragewrap"><div id="ragebar"></div></div>
 </div>
@@ -1234,6 +1234,9 @@ let specialT = 0, specialWind = 0, specialKind = null;
 // special releases. The wind-up alone read as limp — a special you spent three
 // parries on should stop the world for a moment.
 let cutIn = 0;            // counts down through the cut-in
+const CUTIN_IMG = new Image();
+let cutinReady = false;
+CUTIN_IMG.onload = ()=>{ cutinReady = true; };
 const CUTIN_LEN = 62;
 let blinkTrail = 0, blinkFx = 1, blinkFy = 0;
 // A player-owned beam. Reuses the rock pipeline but carries damage and its own
@@ -2597,41 +2600,34 @@ function draw(){
     ctx.beginPath(); ctx.moveTo(-W, bandH/2-8); ctx.lineTo(W, bandH/2-8); ctx.stroke();
     ctx.restore();
 
-    // the hero portrait — slams in from the left
-    if(heroSheetReady){
-      const px2 = -240 + slide*(W*0.30 + 240);
-      const py2 = H/2;
-      const size = 210;
-      ctx.save();
-      ctx.translate(px2, py2);
-      ctx.scale(1.9, 1.9);
-      // his attack pose, big
-      const cell = 128;
-      ctx.drawImage(atkSheetReady ? bladeSheet() : HERO_SHEET,
-                    3*cell, 1*cell, cell, cell, -cell/2, -cell/2, cell, cell);
-      ctx.restore();
-      // rim light in the weapon colour
+    // One big landscape portrait, no text. Sized to fill the WIDTH — the art
+    // is a wide upper-body shot, so fitting height would crop the blade.
+    if(cutinReady){
+      const iw = CUTIN_IMG.naturalWidth, ih = CUTIN_IMG.naturalHeight;
+      const scale = (W*1.0)/iw;
+      const dw = iw*scale, dh = ih*scale;
+      const restX = W/2 - dw/2;
+      const dx = restX - (1-slide)*(W*0.6);      // slams in from the left
+      const dy = H/2 - dh/2;
+      ctx.globalAlpha = slide;
+      ctx.drawImage(CUTIN_IMG, dx, dy, dw, dh);
+      ctx.globalAlpha = 1;
+      // rim wash in the weapon's colour so it belongs to this sword
       ctx.globalCompositeOperation='lighter';
-      ctx.globalAlpha = 0.28*slide;
+      ctx.globalAlpha = 0.14*slide;
       ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
-      ctx.beginPath(); ctx.arc(px2, py2, 130, 0, Math.PI*2); ctx.fill();
+      ctx.fillRect(dx, dy, dw, dh);
       ctx.globalAlpha = 1;
       ctx.globalCompositeOperation='source-over';
-    }
-
-    // relic name + SPECIAL label, sliding in from the right
-    if(rel){
-      const tx = W + 60 - slide*(W*0.42 + 60);
-      ctx.textAlign='right';
-      ctx.font='bold 15px system-ui';
-      ctx.fillStyle=`rgba(255,255,255,${0.75*slide})`;
-      ctx.fillText('필  살  기', W - 40, H/2 - 34);
-      ctx.font='bold 40px system-ui';
-      ctx.strokeStyle='rgba(0,0,0,.7)'; ctx.lineWidth=5;
-      ctx.strokeText(rel.name, Math.min(W-40, tx+W*0.42), H/2 + 16);
-      ctx.fillStyle=`rgb(${cr},${cg},${cb})`;
-      ctx.fillText(rel.name, Math.min(W-40, tx+W*0.42), H/2 + 16);
-      ctx.textAlign='left';
+    } else if(heroSheetReady){
+      // fallback until the cut-in art exists: blow up the attack sprite
+      const px2 = -240 + slide*(W*0.5 + 240);
+      ctx.save();
+      ctx.translate(px2, H/2);
+      ctx.scale(3.4, 3.4);
+      ctx.drawImage(atkSheetReady ? bladeSheet() : HERO_SHEET,
+                    3*128, 1*128, 128, 128, -64, -64, 128, 128);
+      ctx.restore();
     }
 
     // white flash right as it fires
