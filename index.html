@@ -52,7 +52,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="c"></canvas></div>
-<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.69</span>
+<div id="hud">HP <b id="hp">100</b>/<b id="mhp">100</b> · Lv <b id="lv">1</b> · <b id="gold">0</b>G · 남은 적 <b id="left">0</b> · <span id="ver">v0.70</span>
   <div id="xpwrap"><div id="xpbar"></div></div>
   <div id="ragewrap"><div id="ragebar"></div></div>
 </div>
@@ -1083,12 +1083,12 @@ function drawSprite(name, cx, cy, scale, flipX, tint){
 const ETYPE = {
   // kb = knockback resistance multiplier. Heavy things shrug off a sword hit;
   // being shoved around would rob the big bosses of their weight.
-  grunt:   { r:22, spd:2.0, hp:3, color:'#e05a5a', touch:6,  xp:3,   gold:6,  kb:1.0 },  // basic chaser
-  charger: { r:26, spd:1.1, hp:4, color:'#e0913a', touch:10, xp:6,   gold:16, kb:0.55 }, // slow, then lunges
-  shooter: { r:22, spd:1.5, hp:2, color:'#9a5ae0', touch:5,  xp:5,   gold:12, kb:1.0 },  // keeps distance, fires
-  shield:  { r:24, spd:1.4, hp:5, color:'#6a8fb0', touch:8,  xp:8,   gold:20, kb:0.3 },  // guards its front — parry or flank it
-  boss:    { r:52, spd:1.3, hp:150, color:'#c94f4f', touch:18, xp:120, gold:200, kb:0 },  // orc lord — immovable
-  knight:  { r:34, spd:4.2, hp:420, color:'#e8c86a', touch:26, xp:200, gold:400, kb:0.2 }, // golden knight — light but braced
+  grunt:   { r:22, spd:2.0, hp:6, color:'#e05a5a', touch:6,  xp:3,   gold:9,  kb:1.0 },  // basic chaser
+  charger: { r:26, spd:1.1, hp:11, color:'#e0913a', touch:10, xp:6,   gold:22, kb:0.55 }, // slow, then lunges
+  shooter: { r:22, spd:1.5, hp:4, color:'#9a5ae0', touch:5,  xp:5,   gold:17, kb:1.0 },  // keeps distance, fires
+  shield:  { r:24, spd:1.4, hp:13, color:'#6a8fb0', touch:8,  xp:8,   gold:26, kb:0.3 },  // guards its front — parry or flank it
+  boss:    { r:52, spd:1.3, hp:330, color:'#c94f4f', touch:18, xp:120, gold:280, kb:0 },  // orc lord — immovable
+  knight:  { r:34, spd:4.2, hp:560, color:'#e8c86a', touch:26, xp:200, gold:400, kb:0.2 }, // golden knight — light but braced
 };
 // how hard enemies push each other apart so a group doesn't collapse into one blob
 const SEPARATION = 0.55;
